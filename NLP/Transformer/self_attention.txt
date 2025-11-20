@@ -1,0 +1,112 @@
+Why Self-Attention is Needed in Transformers
+
+1.The Problem with Old Models (RNNs / LSTMs)
+
+RNNs and LSTMs process sentences sequentially — word by word. They read input in order (left to right), and each step depends on the previous one. This creates several problems:
+A. They are slow
+Because each step must wait for the previous one, the model cannot run in parallel. This makes training and inference slow.
+B. They forget long-range relationships
+Even LSTMs, which include mechanisms to handle long-term memory, struggle to remember information that appeared many words earlier. The influence of earlier words fades as sentences get longer.
+C. They suffer from a bottleneck
+At each step, the model must compress all previous context into a single hidden state vector. This bottleneck makes it difficult to store detailed or long-range information.
+
+How Transformers Solve These Problems
+
+Transformers introduce a new mechanism called Self-Attention, which removes recurrence entirely.
+A. Parallel processing
+Transformers process all words at once instead of step-by-step. This allows massive parallelization and greatly improves speed.
+B. Self-Attention captures relationships between any words
+Every word can directly connect to every other word, regardless of distance. This allows the model to understand long-range dependencies naturally and without information loss.
+C. Positional encoding replaces recurrence
+Since Transformers do not read words in order, they add positional encodings to each word embedding. This provides the model with information about the order of words in the sentence.
+
+
+
+2.What Self-Attention Does
+
+Self-Attention allows every word to look at all other words in the sentence and decide:
+“Which words are most relevant for understanding my meaning?”
+It lets the model pick out helpful context automatically.
+
+Example:
+Sentence: “Apple launched a new phone”
+
+When processing the word “Apple”, the model must decide if it refers to a fruit or a company.
+The word “phone” provides strong context, so “Apple” pays more attention to it.
+This helps the model understand that “Apple” refers to the company, not the fruit.
+
+Self-Attention basically allows words to use each other as clues, no matter how far apart they are.
+
+
+3. Working of
+ Self-Attention :
+
+STATIC vs CONTEXTUAL EMBEDDINGS
+
+What Are Static Embeddings?
+Examples: Word2Vec, GloVe, FastText
+Each word has one fixed vector.
+“Bank” (financial) and “bank” (river bank) → same embedding.
+“Apple” (fruit) and “Apple” (company) → same vector.
+No sentence awareness.
+
+money  → e_money
+bank   → e_bank
+grows  → e_grows
+These embeddings never change regardless of the sentence.
+
+Why Static Embeddings Are Not Enough
+
+Word meanings depend on context:
+“bank” in money bank grows
+“bank” in river bank flows
+Static embedding cannot tell the difference
+
+Enter Self-Attention → Contextual Embeddings
+
+Self-Attention transforms each embedding based on how strongly it relates to other words in the same sentence.
+The formula is:
+                ei(new)​=(1toj)∑​wij​⋅ej​
+
+w_ij = attention weight from word i to word j
+e_j = embedding of word j
+This turns fixed vectors → context-aware vectors.
+
+Sentence 1
+money attends → 0.7 money + 0.2 bank + 0.1 grows
+bank  attends → 0.25 money + 0.7 bank + 0.05 grows
+grows attends → 0.1 money + 0.2 bank + 0.7 grows
+
+Contextual Embeddings (Sentence 1)
+y_money = 0.7*e_money + 0.2*e_bank + 0.1*e_grows
+y_bank  = 0.25*e_money + 0.7*e_bank + 0.05*e_grows
+y_grows = 0.1*e_money + 0.2*e_bank + 0.7*e_grows
+
+Sentence 2 
+
+river attends → 0.8 river + 0.15 bank + 0.05 flows
+bank  attends → 0.2 river + 0.78 bank + 0.02 flows
+flows attends → 0.4 river + 0.01 bank + 0.59 flows
+
+Contextual Embeddings (Sentence 2)
+y_river = 0.8*e_river + 0.15*e_bank + 0.05*e_flows
+y_bank  = 0.2*e_river + 0.78*e_bank + 0.02*e_flows
+y_flows = 0.4*e_river + 0.01*e_bank + 0.59*e_flows
+
+Contextual embeddings solve the biggest linguistic problem:
+One word = multiple meanings.
+Transformers generate embeddings that depend on the entire sentence, not just the word itself.
+
+Static embedding = dictionary meaning
+Contextual embedding = meaning in the sentence (through Self-Attention)
+
+
+Self-Attention answers one key question:
+“When understanding this word, which other words should I pay attention to, and by how much?”
+
+It solves:
+✅ Long-range dependency
+✅ Multiple meanings (polysemy)
+✅ Parallel computation (no recurrence)
+✅ Context-aware representations
+

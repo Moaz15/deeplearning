@@ -2,6 +2,7 @@ import numpy as np
 
 class Perceptron:
     def __init__(self,learning_rate = 0.01 ,n_epochs = 1000):
+        
         self.lr = learning_rate
         self.epochs = n_epochs
         self.weights = None

@@ -1,0 +1,185 @@
+Text to Vectors Journey
+----------------------------------------------------------------------------------------------------------------------------------------
+1. Text → Tokens (Tokenization)
+What is tokenization?
+Tokenization is the process of splitting raw text into smaller units called tokens.
+
+Tokens can be:
+Words → “NLP is fun” → ["NLP", "is", "fun"]
+Subwords → “playing” → ["play", "ing"]
+Characters → ["p", "l", "a", "y", ...]
+Special tokens → <PAD>, <CLS>, <EOS>
+
+Why do we tokenize?
+
+Models cannot directly process text—only sequences of numbers.
+Tokenization breaks the text into manageable pieces that we can convert into numbers later.
+
+2. Tokens → IDs (Numerical Encoding)
+Every token is mapped to an integer using a vocabulary.
+
+[NLP,  is, fun]
+[1032, 27, 6509]
+
+3. Token IDs → Vectors (Embeddings)
+Each token ID is converted into a dense vector (embedding) that represents meaning.
+
+1032 → [0.12, -0.45, 0.88, ...]
+  27 → [-0.33, 1.12, 0.02, ...]
+6509 → [0.47, -0.22, 0.55, ...]
+
+This step is performed using an Embedding Layer — a special lookup table inside the model.
+
+The Embedding Matrix
+When a model is created, it initializes a matrix called the embedding matrix:
+Size:
+Vocabulary_size × Embedding_dimension
+Example:
+Vocabulary: 30,000 tokens
+Embedding dimension: 768
+
+Embeddings Are Learned During Training
+
+Initially, embeddings are random.
+During training (backpropagation), their values are adjusted so that:
+similar words → vectors get closer
+different words → vectors move apart
+
+
+4. Vectors → Model Input
+
+These embeddings are fed into an NLP model (Transformer, LSTM, etc.), which performs tasks like:
+text classification
+translation
+question answering
+text generation
+
+
+----------------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------------- 
+Timeline of Token → Vector Techniques in NLP
+
+One-Hot Encoding (1980s–1990s)
+
+Represent each word as a vector of all zeros except one 1 at its index.
+Size = vocabulary size.
+
+["apple", "banana", "cat", "dog"]
+
+apple  → [1, 0, 0, 0]
+banana → [0, 1, 0, 0]
+cat    → [0, 0, 1, 0]
+dog    → [0, 0, 0, 1]
+
+Problems:
+1. Extremely High Dimensionality
+
+If your vocabulary has 50,000 unique words, each one-hot vector must be 50,000 dimensions long.
+Almost all values are zeros, so it wastes memory and computation.
+Models that use these vectors (like early neural nets) end up with huge weight matrices.
+Why this is bad:
+Training becomes slow and expensive, and storing these vectors is inefficient.
+
+2. No Semantic Information
+
+One-hot vectors treat every word as equally distant from every other word.
+“cat” and “dog” → unrelated in the vector space
+“cat” and “cat” → related only if identical, otherwise no nuance
+There’s no way to encode:
+similarity
+analogy
+context
+relationships (e.g., king ↔ queen)
+
+3. Ignores Word Frequency and Context
+
+Every word, rare or common, gets:
+the same vector length
+the same distance from others
+no information about how it appears in sentences
+Why this is bad:
+The vector doesn’t reflect how language behaves in real usage.
+
+4. Poor Transfer Learning
+
+A one-hot model trained on one dataset cannot easily be reused on another:
+Vocabulary changes → all vectors change
+There is no shared representation across datasets
+
+One-hot encoding was too:
+
+big
+sparse
+meaningless
+context-free
+
+TF-IDF (1990s)
+
+TF-IDF stands for Term Frequency – Inverse Document Frequency.
+It scores how important a word is in a document relative to the entire document collection.
+
+Step 1 — TF (Term Frequency)
+Measures how often a word appears in one document.
+
+Example document:
+“I love apple apple pie”
+Counts:
+apple = 2
+love = 1
+pie = 1
+Total words = 4
+So:
+TF(apple) = 2/4 = 0.5
+TF(love) = 1/4 = 0.25
+TF(pie) = 1/4 = 0.25
+
+Step 2 — IDF (Inverse Document Frequency)
+
+Measures how rare a word is across the entire dataset.
+Formula:
+IDF(t)=log(1+ntN)
+
+N = total number of documents
+nₜ = number of documents containing term t
+
+Common words (the, is, a, and) appear in many documents → low IDF
+Rare words (apple, mitochondria) appear in few documents → high IDF
+
+Step 3 — TF * IDF 
+Final score:  TFIDF(t,d) = TF(t,d) * IDF(t)
+This boosts important, rare words and reduces common words.
+
+If “apple” is rare across documents → high IDF
+TF = 0.5
+TF-IDF might become something like:
+
+love: 0.1
+apple: 0.5
+pie:   0.3
+
+
+Problems / Limitations of TF-IDF
+
+1. Still No Semantic Meaning
+Words are treated independently.
+
+“car” and “automobile” are totally unrelated.
+“bank” (river) and “bank” (finance) not distinguished.
+TF-IDF only counts frequency, not meaning.
+
+2. High-Dimensional & Sparse
+
+If vocabulary = 50,000 words, each document vector = 50,000 dimensions.
+Most entries are 0 → inefficient.
+
+3. No Word Order or Context
+
+TF-IDF ignores everything except counts.
+“dog bites man”
+“man bites dog”
+→ same TF-IDF vector.
+It cannot capture grammar, syntax, or sequence.
+
+4. No Handling of Out-of-Vocabulary Words
+If a new word appears in a new document, it was not in the original vocabulary → the vector breaks.
+
