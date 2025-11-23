@@ -21,7 +21,6 @@ C. Positional encoding replaces recurrence
 Since Transformers do not read words in order, they add positional encodings to each word embedding. This provides the model with information about the order of words in the sentence.
 
 
-
 2.What Self-Attention Does
 
 Self-Attention allows every word to look at all other words in the sentence and decide:
@@ -37,9 +36,7 @@ This helps the model understand that “Apple” refers to the company, not the 
 
 Self-Attention basically allows words to use each other as clues, no matter how far apart they are.
 
-
-3. Working of
- Self-Attention :
+3. Working of Self-Attention :
 
 STATIC vs CONTEXTUAL EMBEDDINGS
 
@@ -109,4 +106,149 @@ It solves:
 ✅ Multiple meanings (polysemy)
 ✅ Parallel computation (no recurrence)
 ✅ Context-aware representations
+
+
+4. Introducing Q, K, V (Query, Key, Value)
+
+Until now, we saw what Self-Attention does:
+It lets each word look at all other words and decide how much to use them to understand its meaning.
+
+But how does a word decide which other words are useful?
+To make this decision, Transformers give three different versions of each word:
+
+1) Query (Q) — What the word is looking for
+
+This is like the word asking a question:
+“Who can help me understand myself?”
+“What clues do I need?”
+
+Example:
+If the word is Apple, its Query represents:
+“Help me decide if I'm a fruit or the company.”
+
+2) Key (K) — What each word offers
+
+Every word also carries a “tag” that represents what kind of information it contains.
+
+Examples:
+“phone” offers tech-related meaning
+“tree” offers nature-related meaning
+“money” offers financial meaning
+“river” offers water/environment meaning
+Keys tell other words:
+“This is what I represent.”
+
+3) Value (V) — The actual information each word provides
+
+If a word is selected as important, its Value holds the information that gets added into the contextual meaning.
+Think of Value as:
+“If you choose me, here is the meaning I will contribute.”
+
+Putting Q, K, V Together (A Simple Story)
+
+Imagine we want to understand the meaning of the word bank.
+
+Step 1 — “bank” creates a Query
+Its Query asks:
+“Am I a financial bank or a river bank? What clues do I need?”
+
+Step 2 — All other words offer their Keys
+“money” offers: “I'm related to finance.”
+“river” offers: “I'm related to nature/water.”
+“flows” offers: “I'm related to movement in water.”
+
+Step 3 — The Query of “bank” matches each Key
+
+Q(bank) matches strongly with K(money) → financial context
+Q(bank) matches weakly with K(grows) → not helpful
+Q(bank) matches strongly with K(river) → water context
+
+Step 4 — Only the useful words contribute their Values
+
+If bank attends more to “money”, its Value vector becomes financial
+If it attends more to “river”, its Value vector becomes nature-related
+
+This is how:
+
+“bank” → finance meaning in one sentence
+“bank” → river meaning in another sentence
+
+Q, K, V allow Self-Attention to determine meaning based on context.
+
+Why Q, K, V Are Needed
+
+Before this step, every word had only one embedding vector.
+But each word has three roles inside attention:
+
+It must ask things → Query
+It must represent itself → Key
+It must provide meaning → Value
+
+So the Transformer creates Q, K, V by applying three learnable transformations to the original word embedding.
+
+This allows the model to learn:
+What questions a word should ask (Q)
+What information a word carries (K)
+What meaning a word provides when selected (V)
+
+
+5. How Attention Scores Are Calculated (Q, K → Weights → V)
+
+Once every word has its Query (Q), Key (K), and Value (V), Self-Attention must determine which words matter for understanding the meaning of the current word.
+This happens in three clear steps.
+
+Q = E × W_Q
+K = E × W_K
+V = E × W_V
+
+These matrices are trained along with the whole Transformer.
+
+5.1 Step 1 — Similarity (Q compared with K)
+
+To understand a specific word (say “river”), the model compares:
+Q_river → what “river” is looking for
+with
+K_river, K_bank, K_flows → what each word offers
+
+This comparison produces raw similarity scores, which answer:
+“How relevant is each word to ‘river’?”
+
+sim(river, river)
+sim(river, bank)
+sim(river, flows)
+
+5.2 Step 2 — Softmax (Scores → Attention Weights)
+
+Raw scores can be:
+negative
+very large
+unbounded
+
+Softmax converts these into normalized weights:
+positive values
+sum to 1
+represent “how much attention each word deserves”
+
+w_river,river = 0.80
+w_river,bank  = 0.15
+w_river,flows = 0.05
+
+These weights come directly from the Q–K similarity.
+
+5.3 Step 3 — Weighted Sum (THIS IS WHERE V IS USED)
+
+Once attention weights are known, the model gathers information from the other words.
+This information is taken from each word’s Value vector (V).
+
+Each Value vector is computed as:
+V_word = E_word × W_V
+
+y_river = 0.80 * V_river
+        + 0.15 * V_bank
+        + 0.05 * V_flows
+
+This is the moment where:
+Q asked the question
+K decided relevance
+V provided the actual meaning
 
