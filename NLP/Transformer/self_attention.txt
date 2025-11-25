@@ -1,6 +1,6 @@
 Why Self-Attention is Needed in Transformers
 
-1.The Problem with Old Models (RNNs / LSTMs)
+1.The Problem with Old Models (RNNs/LSTMs)
 
 RNNs and LSTMs process sentences sequentially — word by word. They read input in order (left to right), and each step depends on the previous one. This creates several problems:
 A. They are slow
@@ -62,12 +62,14 @@ Static embedding cannot tell the difference
 Enter Self-Attention → Contextual Embeddings
 
 Self-Attention transforms each embedding based on how strongly it relates to other words in the same sentence.
-The formula is:
-                ei(new)​=(1toj)∑​wij​⋅ej​
+The update rule is:
+                ei(new)​=j∑​wij​⋅Vj​
 
 w_ij = attention weight from word i to word j
-e_j = embedding of word j
-This turns fixed vectors → context-aware vectors.
+Vⱼ = Value vector of word j
+(computed as 𝑉𝑗 =𝐸𝑗×𝑊v , not the static embedding)
+This process turns fixed embeddings into context-aware embeddings, because each updated vector is a weighted mixture of the Value vectors of all other words in the sentence.
+
 
 Sentence 1
 money attends → 0.7 money + 0.2 bank + 0.1 grows
@@ -75,9 +77,9 @@ bank  attends → 0.25 money + 0.7 bank + 0.05 grows
 grows attends → 0.1 money + 0.2 bank + 0.7 grows
 
 Contextual Embeddings (Sentence 1)
-y_money = 0.7*e_money + 0.2*e_bank + 0.1*e_grows
-y_bank  = 0.25*e_money + 0.7*e_bank + 0.05*e_grows
-y_grows = 0.1*e_money + 0.2*e_bank + 0.7*e_grows
+y_money = 0.7*V_money + 0.2*V_bank + 0.1*V_grows
+y_bank  = 0.25*V_money + 0.7*V_bank + 0.05*V_grows
+y_grows = 0.1*V_money + 0.2*V_bank + 0.7*V_grows
 
 Sentence 2 
 
@@ -86,9 +88,9 @@ bank  attends → 0.2 river + 0.78 bank + 0.02 flows
 flows attends → 0.4 river + 0.01 bank + 0.59 flows
 
 Contextual Embeddings (Sentence 2)
-y_river = 0.8*e_river + 0.15*e_bank + 0.05*e_flows
-y_bank  = 0.2*e_river + 0.78*e_bank + 0.02*e_flows
-y_flows = 0.4*e_river + 0.01*e_bank + 0.59*e_flows
+y_river = 0.8*V_river + 0.15*V_bank + 0.05*V_flows
+y_bank  = 0.2*V_river + 0.78*V_bank + 0.02*V_flows
+y_flows = 0.4*V_river + 0.01*V_bank + 0.59*V_flows
 
 Contextual embeddings solve the biggest linguistic problem:
 One word = multiple meanings.
@@ -96,7 +98,6 @@ Transformers generate embeddings that depend on the entire sentence, not just th
 
 Static embedding = dictionary meaning
 Contextual embedding = meaning in the sentence (through Self-Attention)
-
 
 Self-Attention answers one key question:
 “When understanding this word, which other words should I pay attention to, and by how much?”
@@ -116,7 +117,7 @@ It lets each word look at all other words and decide how much to use them to und
 But how does a word decide which other words are useful?
 To make this decision, Transformers give three different versions of each word:
 
-1) Query (Q) — What the word is looking for
+a- Query (Q) — What the word is looking for
 
 This is like the word asking a question:
 “Who can help me understand myself?”
@@ -126,7 +127,7 @@ Example:
 If the word is Apple, its Query represents:
 “Help me decide if I'm a fruit or the company.”
 
-2) Key (K) — What each word offers
+b- Key (K) — What each word offers
 
 Every word also carries a “tag” that represents what kind of information it contains.
 
@@ -138,7 +139,7 @@ Examples:
 Keys tell other words:
 “This is what I represent.”
 
-3) Value (V) — The actual information each word provides
+c- Value (V) — The actual information each word provides
 
 If a word is selected as important, its Value holds the information that gets added into the contextual meaning.
 Think of Value as:
@@ -252,3 +253,102 @@ Q asked the question
 K decided relevance
 V provided the actual meaning
 
+The final Self-Attention output is a linear combination of Value vectors because attention weights represent how much each word should contribute.
+
+A weighted sum is:
+the natural way to aggregate information,
+smooth and differentiable (necessary for training),
+stable,
+and allows contextual blending of meanings.
+
+Q identifies what information is needed,
+K tells how relevant each word is,
+V provides the actual meaning,
+and the linear combination mixes these meanings proportionally.
+
+
+6. Why We Divide by √dₖ (Scaled Dot-Product Attention)
+
+After calculating similarity scores using Q · K, the Transformer applies Softmax to convert these scores into attention weights.
+But before sending these scores to Softmax, we must scale them down.
+
+Why?
+Because without scaling, Self-Attention becomes unstable.
+
+6.1 The Core Problem: Dot-Products Become Too Large
+
+When Q and K are high-dimensional vectors (e.g., 64, 128, 512 dimensions), their dot-product naturally grows large.
+Example:
+If dₖ = 64, dot-products might be around ~8
+If dₖ = 512, dot-products might explode to ~22 or more
+Large dot-products cause issues:
+
+A. Softmax Becomes Too Sharp
+If the input numbers are large, Softmax produces outputs like:
+[0.99999, 0.00001, 0.00000]
+One word gets almost all the attention
+Other words get almost zero
+The model stops learning useful patterns
+Gradients vanish (bad for training)
+
+B. Attention Becomes Overconfident
+The system picks one word as “the only important one”
+Subtle relationships are lost
+Meaning becomes brittle and unstable
+
+6.2 The Solution: Scale the Dot-Product by √dₖ
+
+To avoid exploding similarity scores, the Transformer divides by: √dₖ
+This ensures the values passed into Softmax stay in a reasonable range, no matter how large dₖ is.
+Example:
+
+without scaling:   Q·K = 22  → Softmax = extremely sharp  
+with scaling:      22 / √512 ≈ 0.97  → Softmax = normal, stable
+
+6.3 Why Specifically √dₖ?
+
+Because:
+Dot-products of random vectors have variance proportional to dₖ
+Dividing by √dₖ normalizes the variance to ~1
+
+This keeps the distribution stable, and training becomes smooth and reliable.
+
+6.4 Intuitive Explanation
+
+Think of Q and K as huge vectors.
+More dimensions → more random noise → larger dot-product
+Softmax hates large, spiky numbers
+Scaling by √dₖ “shrinks” the numbers to a manageable size
+So the system keeps behaving properly regardless of embedding size.
+
+6.5 Summary for Notes
+
+Dot-products grow with vector dimension, which causes Softmax to produce overly sharp, unstable attention weights.
+Dividing by √dₖ scales the values back to a healthy range, stabilizing learning and ensuring smooth gradients.
+This simple trick is why Self-Attention works reliably even with very large vector sizes.
+
+Why do we divide by √dₖ and not √d_q or √d_v?
+
+Because the dot-product is computed between Q and K, and its variance grows with the size of K (which is the same as the size of Q).
+Values (V) never enter the dot-product, so d_v does not matter.
+
+The variance of this dot-product depends on how many terms are in the sum → that number is d_k
+So the dot-product naturally grows in magnitude with dₖ.
+That’s why we scale by √dₖ.
+
+In practice: d_q = d_k always (by design)
+In Transformers:
+The Query and Key vectors must have the same dimension
+(otherwise Q·K wouldn’t even be possible)
+
+So d_q = d_k.
+
+6.6 Summary for Notes
+
+Dot-products between Q and K grow with vector dimension dₖ.
+Large dot-products → Softmax becomes overly sharp and unstable.
+Dividing by √dₖ scales similarity scores back to a healthy range.
+This keeps gradients smooth and ensures stable learning.
+√dₖ is used because Q·K contains dₖ terms.
+d_v is irrelevant because V is not in the dot-product.
+d_q = d_k always, so √dₖ is the standard choice.
