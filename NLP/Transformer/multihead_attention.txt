@@ -405,9 +405,8 @@ Too many heads = each head becomes too small
 Too few heads = not enough perspectives
 
 
--------------------------------------------
 Summary (one-line)
--------------------------------------------
+
 
 Splitting attention creates multiple specialized “views” of the sentence,
 making the Transformer far better at capturing complex and ambiguous language patterns.

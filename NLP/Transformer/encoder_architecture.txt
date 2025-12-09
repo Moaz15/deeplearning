@@ -1,0 +1,184 @@
+TRANSFORMER ENCODER 
+===============================================================================================================
+
+1. Encoder Overview
+
+The Transformer encoder consists of N identical layers (N = 6 in the paper).
+Each encoder layer has two main sublayers:
+    1) Multi-Head Self-Attention
+    2) Feed Forward Neural Network (FFN)
+
+Each sublayer is wrapped with:
+    - Skip Connection (Residual)
+    - Layer Normalization (Add & Norm)
+
+So one encoder layer looks like:
+    Input → Multi-Head Attention → Add & Norm → Feed Forward → Add & Norm → Output
+
+All encoder layers have the same structure but different learned parameters.
+
+2. Encoder Layer Flow (Step-by-Step)
+===========================================
+
+Let X be the input embeddings + positional encodings.
+
+Step 1 — Multi-Head Self-Attention
+-------------------------------------------
+
+X → MHA → Z
+
+MHA allows every token to attend to ALL other tokens in the sentence.
+
+Output shape:
+    Z : (sequence_length × d_model)
+
+
+Step 2 — Add & Norm (Residual + LayerNorm)
+-------------------------------------------
+
+We add the original input X to the MHA output Z:
+
+    Z_res = X + Z
+
+Then apply Layer Normalization:
+
+    Z_norm = LayerNorm(Z_res)
+
+This normalized output goes into the feed-forward network.
+
+-------------------------------------------
+Step 3 — Feed Forward Network (FFN)
+-------------------------------------------
+
+Each token is passed independently through a 2-layer MLP:
+
+    FFN(t) = ReLU(t W₁ + b₁) W₂ + b₂
+
+Typical dimensions:
+    W₁: (d_model × 2048)
+    W₂: (2048 × d_model)
+
+This adds non-linearity and feature transformation.
+
+-------------------------------------------
+Step 4 — Add & Norm (Second Residual Block)
+-------------------------------------------
+
+Add skip connection again:
+
+    Y_res = Z_norm + FFN_output
+
+Apply LayerNorm:
+
+    Y_norm = LayerNorm(Y_res)
+
+This Y_norm is the output of the encoder layer.
+It becomes input to the next encoder layer.
+
+===========================================
+3. Why Layer Normalization?
+===========================================
+
+LayerNorm stabilizes and accelerates training by normalizing
+across the feature dimension of each token.
+
+    For each token’s vector (size = d_model):
+        subtract mean
+        divide by standard deviation
+        scale & shift (learnable γ, β)
+
+Benefits:
+
+✔ Prevents exploding/vanishing values  
+✔ Makes learning stable across deep layers 
+✔ Ensures each token stays in a smooth range
+✔ Prevents attention outputs from dominating FFN outputs
+✔ Helps gradient flow during backpropagation
+
+LayerNorm is applied AFTER the residual addition:
+    Add → Norm  (original Transformer)
+because it normalizes the combined signal and stabilizes stacking.
+
+
+4. Why Skip Connections (Residual Connections)?
+===================================================================================
+
+Residual connections add the original input back to the sublayer output:
+
+    Output = Input + Sublayer(Input)
+
+Why?
+
+Reason 1 — Prevent Vanishing Gradients  
+--------------------------------------
+Gradients can flow directly through the skip path.
+This allows very deep models (6, 12, 24, 48 layers) to train reliably.
+
+Reason 2 — Information Preservation  
+------------------------------------
+If the sublayer fails to learn something, the input is still preserved.
+
+Reason 3 — Helps in Identity Mapping  
+-------------------------------------
+Early in training, the network learns to copy inputs → easier optimization.
+
+Reason 4 — Combine Old + New Features  
+-------------------------------------
+Residuals allow:
+    - original representation (X)
+    - refined representation (Attention or FFN output)
+to mix together.
+
+This fusion gives richer meaning.
+
+Reason 5 — Stabilizes Deep Stacking  
+------------------------------------
+Stacking 6–48 encoder layers becomes possible ONLY due to skip connections.
+
+
+5. Feed Forward Network (FFN) Details
+===========================================
+
+Every encoder layer has an identical FFN applied to each token separately.
+
+Formula:
+
+    FFN(x) = max(0, x W₁ + b₁) W₂ + b₂
+
+Where:
+    W₁: (d_model × 2048)
+    W₂: (2048 × d_model)
+    d_model = 512
+
+Why 2048?
+    → Expands information
+    → Allows richer transformations
+    → Non-linear feature extraction
+
+Then the output is projected back to 512 dims.
+
+FFN improves:
+    - abstraction
+    - pattern extraction
+    - representations
+    - non-linearity
+
+6. Encoder: Full Summary
+===========================================
+
+Each encoder layer performs:
+
+    Input (512 dim per token)
+        ↓
+    Multi-Head Self Attention
+        ↓
+    Add & Norm
+        ↓
+    Feed Forward Network (2-layer MLP)
+        ↓
+    Add & Norm
+        ↓
+    Output (512 dim per token)
+
+Stack N encoders → deep understanding of the entire sentence.
+
