@@ -1,0 +1,123 @@
+Masked Multi-Head Attention (Decoder Self-Attention)
+
+1. Why Masked Attention Is Required in the Decoder
+
+Self-Attention allows every token to look at all other tokens in the sequence.
+This is fine in the encoder, but in the decoder it causes a problem:
+
+❌ The decoder must NOT see future tokens.
+
+When generating the output sequence:
+Step 1 → predict token₁
+Step 2 → predict token₂ using token₁
+Step 3 → predict token₃ using token₁, token₂
+… and so on
+
+If the decoder could attend to future tokens (token₃ while predicting token₂), it would cheat → data leakage.
+
+Example:
+Sentence: “आप कैसे हैं”
+When predicting “कैसे”, the model must not see “हैं”.
+
+2. The Mask (Upper-Triangular Mask)
+
+To prevent cheating, we apply a mask on the attention scores:
+Allowed: positions ≤ current position
+Blocked: positions > current position
+This is implemented by adding −∞ to invalid positions before Softmax.
+softmax(−∞) = 0
+
+Therefore, attention weight becomes exactly zero → the model cannot use future tokens.
+
+
+3. Masking Behavior During Training vs Inference
+
+Training Phase
+
+✔ Entire target sentence is available
+✔ Decoder processes all positions in parallel
+✔ But we must still prevent future leakage → mask is applied
+✔ Decoder uses Teacher Forcing
+
+Training = Non-Autoregressive + Masking + Teacher Forcing
+
+Inference Phase (actual generation)
+
+✔ No teacher forcing
+✔ The decoder must generate tokens one by one
+✔ Mask is applied (future tokens don’t even exist yet)
+
+Inference = Autoregressive + Masking
+
+4. Teacher Forcing
+
+Teacher Forcing means:
+At each timestamp, instead of feeding the decoder’s predicted token,
+We feed the correct previous token from the training data.
+Example target sequence: “मैं ठीक हूँ”
+At step 3, instead of feeding predicted “ठीक”, we feed the ground-truth “ठीक”.
+
+Benefits:
+
+Faster training
+Stable gradients
+Parallel computation across entire target sequence
+
+Teacher Forcing is why decoder training is NOT autoregressive.
+
+
+5. Why Decoder Training Is Non-Autoregressive
+
+During training:
+We already know the whole ground truth sentence.
+So all Q, K, V for all positions can be computed in parallel.
+Masking ensures each position only attends to previous positions.
+This removes sequential dependency → massive speedup.
+
+6. Why Decoder Inference IS Autoregressive
+
+During inference:
+The target sequence does not exist.
+The decoder must generate tokens one by one.
+Output at step t is fed back as input for step t+1.
+This creates a strict left-to-right dependency chain.
+This makes inference slow, but necessary.
+
+| Phase         | Mask Needed? | Teacher Forcing? | Autoregressive? |
+| ------------- | ------------ | ---------------- | --------------- |
+| **Training**  | Yes          | Yes              | No              |
+| **Inference** | Yes          | No               | Yes             |
+
+
+Mask is ALWAYS used.
+Autoregression happens ONLY during inference.
+
+8. Masked Attention Formula
+
+Let S be the attention score matrix and M the mask.
+S_masked = S + M
+
+M[i][j] = 0      if j ≤ i     → allowed  
+M[i][j] = −∞     if j > i     → block future  
+
+Attention = softmax(S_masked) * V
+Softmax zeroes out all future tokens.
+
+
+Training is computationally parallel but functionally autoregressive.
+Because the decoder still uses the causal mask.
+
+Inference is autoregressive both functionally and computationally.
+
+Training appears non-autoregressive because all positions are computed in parallel, 
+but the causal mask ensures the model is still learning the same autoregressive function it will use at inference. 
+The architecture is identical; only the inputs change.
+
+| Component               | Training                | Inference                     |
+| ----------------------- | ----------------------- | ----------------------------- |
+| Decoder weights         | SAME                    | SAME                          |
+| Architecture            | SAME                    | SAME                          |
+| Masking                 | SAME                    | SAME                          |
+| Input tokens            | Ground truth sequence   | Only past predicted tokens    |
+| How we call `forward()` | Once for whole sequence | Repeatedly, 1 token at a time |
+| Parallel?               | YES                     | NO                            |

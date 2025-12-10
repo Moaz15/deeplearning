@@ -136,32 +136,172 @@ Reason 5 — Stabilizes Deep Stacking
 Stacking 6–48 encoder layers becomes possible ONLY due to skip connections.
 
 
-5. Feed Forward Network (FFN) Details
+FEED-FORWARD NETWORK (FFN) — DEEP DIVE
 ===========================================
 
-Every encoder layer has an identical FFN applied to each token separately.
+1. What the FFN Does
+-------------------------------------------
 
-Formula:
+Inside each encoder (and decoder) layer,
+AFTER Multi-Head Attention, we apply a **position-wise feed-forward network**.
 
-    FFN(x) = max(0, x W₁ + b₁) W₂ + b₂
+This network processes **each token independently** but **identically**:
 
-Where:
-    W₁: (d_model × 2048)
-    W₂: (2048 × d_model)
-    d_model = 512
+    FFN(x) = ReLU(x W₁ + b₁) W₂ + b₂
 
-Why 2048?
-    → Expands information
-    → Allows richer transformations
-    → Non-linear feature extraction
+It is simply a 2-layer MLP applied to every token vector.
 
-Then the output is projected back to 512 dims.
+Purpose:
+    - Add non-linearity
+    - Expand & compress features
+    - Allow deeper abstraction
+    - Enable richer transformations than attention alone
 
-FFN improves:
-    - abstraction
-    - pattern extraction
-    - representations
-    - non-linearity
+2. Why Not Just Use More Attention Layers?
+===========================================
+
+Attention captures **relationships between words**.
+
+But attention alone is linear:
+    Q, K, V projections are linear ops.
+    Attention weighted sums are linear.
+
+Without FFN, the Transformer would be almost linear → too weak.
+
+FFN introduces:
+    ✔ non-linearity  
+    ✔ multi-layer learning  
+    ✔ complex feature transformations  
+
+
+3. FFN Dimensions (Key Insight)
+-------------------------------------------
+
+For d_model = 512, the FFN uses:
+
+    W₁ : (512 × 2048)
+    W₂ : (2048 × 512)
+
+This is called:
+    → expansion (512 → 2048)
+    → compression (2048 → 512)
+
+Why expand to 2048?
+
+Because expanding dimensions lets the network learn **powerful intermediate features** before compressing back.
+
+Think of it like:
+    512-dim tokens go into a large workspace (2048 dims)
+    → network learns rich, abstract patterns
+    → compresses them back into 512 dims
+
+
+4. FFN Intuition (How It Really Helps)
+-------------------------------------------
+
+Attention mixes information **across tokens**.
+
+FFN transforms information **within each token**.
+
+Together they work like:
+    Attention = How tokens relate to each other
+    FFN = How each token transforms internally
+
+Example:
+Token “bank” after attention already knows:
+    “money” is nearby
+    “flows” is related
+    context determines meaning
+
+But FFN helps refine:
+    - semantic meaning
+    - syntactic structure
+    - task-specific features
+
+The FFN lets the model detect:
+    - higher-level patterns
+    - abstract meaning (financial bank vs river bank)
+    - transformations attention can’t capture alone
+
+5. Why ReLU?
+-------------------------------------------
+
+ReLU adds:
+    ✔ non-linearity (required for expressive power)
+    ✔ sparsity (helps specialization)
+    ✔ stable gradients
+
+Sometimes GELU (used in GPT, BERT) works better because:
+    - smoother
+    - captures subtle patterns
+
+But the original Transformer uses ReLU.
+
+
+6. FFN Runs Independently for Each Token
+-------------------------------------------
+
+Important point:
+The FFN does NOT allow tokens to talk to each other.
+
+It is applied identically to every token vector.
+
+Parallelizable? YES.
+Simple? YES.
+Powerful? VERY.
+
+7. FFN Computation (Step-by-Step With Shapes)
+-------------------------------------------
+
+Let x be a token embedding (1 × 512).
+
+Step 1: Expand  
+    h = x W₁ + b₁        → shape (1 × 2048)
+
+Step 2: Non-linearity  
+    h_relu = ReLU(h)     → shape (1 × 2048)
+
+Step 3: Compress  
+    y = h_relu W₂ + b₂   → shape (1 × 512)
+
+Each token independently produces a new 512-d vector.
+
+
+8. Why 2048? Why Expansion?
+-------------------------------------------
+
+Empirical + theoretical reasons:
+
+Reason 1 — More Capacity  
+--------------------------------
+A wider hidden layer captures richer patterns.
+
+Reason 2 — Better Non-linear Mixing  
+--------------------------------
+Non-linear functions behave best in larger spaces.
+
+Reason 3 — Universal Approximation  
+--------------------------------
+A 2-layer MLP with enough hidden units can approximate ANY function.
+
+Reason 4 — Learned Abstractions  
+--------------------------------
+2048 dims help model lexical, syntactic, and semantic patterns.
+
+
+9. FFN Summary (One Page)
+-------------------------------------------
+
+- FFN = 2-layer MLP inside every encoder/decoder layer  
+- Formula: FFN(x) = ReLU(x W₁ + b₁) W₂ + b₂  
+- Expands 512 → 2048 → 512  
+- Adds non-linearity  
+- Helps token-wise transformation  
+- Works independently for each token  
+- Essential for model expressiveness  
+- Attention handles token interactions; FFN handles token transformations  
+
+
 
 6. Encoder: Full Summary
 ===========================================
