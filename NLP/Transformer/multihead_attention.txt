@@ -1,4 +1,3 @@
-===========================================
 MULTI-HEAD ATTENTION 
 ===========================================
 
@@ -263,7 +262,7 @@ Multi-Head Attention:
 - performs attention independently in each subspace
 - recombines them back into the full 512-dimensional space
 
-===========================================
+
 END OF SECTION 2
 =======================================
 
