@@ -1,0 +1,85 @@
+1️⃣ Raw text
+"I love transformers"
+
+2️⃣ Tokenization
+Depending on tokenizer (BPE / WordPiece / SentencePiece):
+["I", "love", "transform", "##ers"]
+Each token is mapped to an integer ID.
+
+3️⃣ Vocabulary (lookup table)
+Tokenizer builds a dictionary like:
+{
+  "I": 0,
+  "love": 1,
+  "transform": 2,
+  "##ers": 3,
+  "[PAD]": 4,
+  "[UNK]": 5,
+  ...
+}
+Total number of entries in this dictionary = vocab_size
+
+self.embedding = nn.Embedding(vocab_size, d_model)
+
+Input:
+ x  = [[4, 15, 27]]          → shape (1, 3)
+
+[[4, 15, 27]]
+Outer list → batch
+Inner list → tokens in one sentence
+
+Why is it wrapped in another [ ]?
+Because Transformers always work with batches.
+
+[[4, 15, 27]] represents a batch of one sequence with three token IDs, giving a tensor shape of (1, 3).
+
+self.embedding(x)
+
+Embedding table:
+(vocab_size, d_model)
+
+Output:
+[
+  [ vector(4), vector(15), vector(27) ]
+]                      → shape (1, 3, d_model)
+
+
+
+Embeddings → multiplied by √d_model
+Attention scores → divided by √d_k
+
+From “Attention Is All You Need”:
+“We multiply the embeddings by √d_model.”
+
+Embedding scaling (multiply)
+
+embedding * √d_model
+Why?
+Embeddings are randomly initialized
+Their variance is small
+Scaling brings embeddings to the same magnitude as positional encodings
+Helps signal strength early in the network
+
+Where?
+Input embedding layer
+Happens once
+
+Attention scaling (divide)
+
+(Q · Kᵀ) / √d_k
+Why?
+Dot products grow with dimension
+Large values → softmax saturation
+Dividing stabilizes gradients
+
+Where?
+Inside attention
+Happens every attention call
+
+| Component        | Operation  | Purpose                   |
+| ---------------- | ---------- | ------------------------- |
+| Input embeddings | × √d_model | Boost signal strength     |
+| Attention scores | ÷ √d_k     | Prevent softmax explosion |
+
+
+
