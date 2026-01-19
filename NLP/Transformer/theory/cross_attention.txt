@@ -1,0 +1,108 @@
+Cross Attention (Encoder–Decoder Attention)
+------------------------------------------------------------------------------------------------------------------------------------
+
+Cross-attention is an attention mechanism used in encoder–decoder Transformer architectures where:
+Queries (Q) come from the decoder
+Keys (K) and Values (V) come from the encoder
+
+Purpose:
+While generating each output token, the decoder selectively focuses on relevant parts of the input sequence.
+
+Cross-attention is essential for sequence-to-sequence tasks such as:
+
+Machine Translation
+Summarization
+Speech-to-text
+Image captioning
+
+Why Do We Need Cross Attention?
+
+In tasks like translation:
+Input sequence (English) and output sequence (Hindi) are:
+Different languages
+Different lengths
+Different token alignments
+
+Input (English):  I like eating ice-cream
+Output (Hindi):   मुझे आइसक्रीम खाना पसंद है
+
+While generating each Hindi word, the model must:
+Look back at the entire English sentence
+Decide which English words matter most right now
+
+Self-attention alone cannot do this because:
+Self-attention only looks within the same sequence
+Decoder self-attention only sees previously generated output tokens
+
+Cross-attention connects output generation to input understanding
+
+Cross-attention exists only in the decoder.
+
+Data Flow in Cross Attention
+
+Let:
+Encoder output: E ∈ R^{T_src × d_model}
+Decoder hidden states: D ∈ R^{T_tgt × d_model}
+Projections
+
+Q = D × W_Q
+K = E × W_K
+V = E × W_V
+
+Attention computation:
+Attention(Q, K, V) = softmax( QKᵀ / √d_k ) × V
+
+Key point:
+Decoder decides what to ask (Q)
+Encoder provides what it knows (K, V)
+
+Intuition (Human Analogy)
+Think of translation as:
+Encoder = reader who understands English fully
+Decoder = writer generating Hindi words
+
+At each step:
+Writer asks: “Which part of English should I look at now?”
+Reader answers by pointing to relevant words
+That interaction is cross-attention.
+
+| Aspect          | Self Attention          | Cross Attention     |
+| --------------- | ----------------------- | ------------------- |
+| Q source        | Same sequence           | Decoder             |
+| K, V source     | Same sequence           | Encoder             |
+| Purpose         | Context within sequence | Link input → output |
+| Used in Encoder | Yes                     | No                  |
+| Used in Decoder | Yes (masked)            | Yes                 |
+
+Is Cross Attention Masked?
+❌ No causal masking is needed in cross-attention
+
+Reason:
+Encoder outputs are fully known
+Decoder is allowed to attend to all input tokens
+
+Masking is required only in:
+Decoder self-attention (to prevent future token leakage)
+
+Training:
+
+Decoder input = shifted right ground-truth tokens (teacher forcing)
+Cross-attention attends to fixed encoder outputs
+Fully parallel across time steps
+
+Inference:
+
+Decoder generates tokens one by one
+At every step:
+Self-attention → past generated tokens
+Cross-attention → full encoder output
+Encoder output is computed once and reused.
+
+Why GPT Has No Cross Attention
+GPT:
+Is decoder-only
+Uses a single token stream
+Converts every task into next-token prediction
+
+
+
