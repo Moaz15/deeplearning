@@ -342,13 +342,3 @@ The Query and Key vectors must have the same dimension
 (otherwise Q·K wouldn’t even be possible)
 
 So d_q = d_k.
-
-6.6 Summary for Notes
-
-Dot-products between Q and K grow with vector dimension dₖ.
-Large dot-products → Softmax becomes overly sharp and unstable.
-Dividing by √dₖ scales similarity scores back to a healthy range.
-This keeps gradients smooth and ensures stable learning.
-√dₖ is used because Q·K contains dₖ terms.
-d_v is irrelevant because V is not in the dot-product.
-d_q = d_k always, so √dₖ is the standard choice.

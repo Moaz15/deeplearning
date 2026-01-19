@@ -15,6 +15,7 @@ Each sublayer is wrapped with:
 So one encoder layer looks like:
     Input → Multi-Head Attention → Add & Norm → Feed Forward → Add & Norm → Output
 
+
 All encoder layers have the same structure but different learned parameters.
 
 2. Encoder Layer Flow (Step-by-Step)
@@ -143,9 +144,9 @@ FEED-FORWARD NETWORK (FFN) — DEEP DIVE
 -------------------------------------------
 
 Inside each encoder (and decoder) layer,
-AFTER Multi-Head Attention, we apply a **position-wise feed-forward network**.
+AFTER Multi-Head Attention, we apply a position-wise feed-forward network.
 
-This network processes **each token independently** but **identically**:
+This network processes **each token independently** but identically:
 
     FFN(x) = ReLU(x W₁ + b₁) W₂ + b₂
 
@@ -156,6 +157,7 @@ Purpose:
     - Expand & compress features
     - Allow deeper abstraction
     - Enable richer transformations than attention alone
+
 
 2. Why Not Just Use More Attention Layers?
 ===========================================

@@ -38,7 +38,6 @@ Attempt: Assign each word its index.
 
 This fails for 3 reasons:
 
-
 Problem 1 — Unbounded Sequence Length
     Positions grow without limit (1, 100, 10000...)
     Models cannot generalize to unseen large indices.
@@ -150,8 +149,6 @@ Each position is encoded using BOTH sine and cosine across multiple frequencies.
 
 The positional encoding vector has the SAME size as the word embedding.
 
-Copy-paste this formula in VS Code:
-
 ---------------------------------------------------------
 # Sinusoidal Positional Encoding Formula
 
@@ -168,8 +165,6 @@ Where:
 - Odd dimensions  → cosine
 - Frequencies decrease exponentially with dimension
 ---------------------------------------------------------
-
-
 Why This Formula Works
 ----------------------
 

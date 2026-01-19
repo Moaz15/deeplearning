@@ -4,10 +4,10 @@ MULTI-HEAD ATTENTION
 1. Why Multi-Head Attention (MHA) Is Needed
 -------------------------------------------
 
-Self-Attention gives each word a contextual meaning by looking at **all** other words.
+Self-Attention gives each word a contextual meaning by looking at all other words.
 But using ONLY ONE attention head has a major limitation:
 
-    → A single head can focus on only **one type of relationship** at a time.
+    → A single head can focus on only one type of relationship at a time.
 
 Example:
 Sentence: "the man saw a kid with a telescope"
@@ -23,10 +23,8 @@ In natural language:
 - A single attention pattern is too restrictive
 
 Multi-Head Attention solves this by allowing the model to look at the sentence from multiple perspectives.
-
 -------------------------------------------------------------------------------------
 2. What Multi-Head Attention Does
-
 
 Instead of computing ONE Self-Attention output (one perspective),
 the Transformer computes **multiple attention operations in parallel**.
@@ -48,15 +46,12 @@ So each head focuses on a different aspect:
 - Head 3: long-range dependency
 - Head 4: coreference (“he”, “the man”)
 - …
-
 Different heads discover different linguistic patterns automatically.
 
-
 3. How Multi-Head Attention Works (High-Level)
--------------------------------------------
-
+------------------------------------------------------
 Step 1 — Split embedding dimension  
------------------------------------
+----------------------------------------------
 Given embedding size = 512  
 and number of heads = 8:
 
@@ -66,7 +61,7 @@ Each head gets:
 This allows heads to be cheaper and specialized.
 
 Step 2 — Linear projections per head  
-------------------------------------
+----------------------------------------------
 For each head h:
 
     Qʰ = X × W_Qʰ
@@ -152,9 +147,9 @@ Final step:
 
 This makes the Transformer flexible, powerful, and good at understanding complex language structures.
 
-===========================================
+=================================================================
 2. Multi-Head Attention — Dimension Flow (With Shapes)
-===========================================
+===================================================================
 
 We start with:
     Sequence length = N
@@ -177,7 +172,6 @@ X has shape:
 
 Example:
     2 tokens → shape = (2 × 512)
-
 
 -------------------------------------------
 Step 2 — Linear Projections for Each Head
@@ -263,10 +257,6 @@ Multi-Head Attention:
 - recombines them back into the full 512-dimensional space
 
 
-END OF SECTION 2
-=======================================
-
-
 ===========================================
 3. Why Splitting Improves Learning (Intuition)
 ===========================================
@@ -309,7 +299,6 @@ Splitting allows each head to specialize:
 
 One head = one perspective  
 Many heads = many perspectives simultaneously
-
 
 -------------------------------------------
 Reason 2 — Ambiguity Handling
@@ -405,7 +394,6 @@ Too few heads = not enough perspectives
 
 
 Summary (one-line)
-
 
 Splitting attention creates multiple specialized “views” of the sentence,
 making the Transformer far better at capturing complex and ambiguous language patterns.
