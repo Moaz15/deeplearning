@@ -1,0 +1,212 @@
+The Transformer decoder is responsible for generating the output sequence (e.g., Hindi translation) one token at a time.
+
+At every decoding step, it answers:
+
+“Given what I have generated so far, and given the input sentence representation, what should the next token be?”
+
+The decoder works in two different modes:
+Training time → Parallel, teacher-forced
+Inference time → Sequential, autoregressive
+
+High-Level Decoder Stack
+
+Each decoder consists of N identical layers.
+
+Each layer has three sub-blocks, in this exact order:
+Masked Multi-Head Self-Attention
+Cross (Encoder–Decoder) Multi-Head Attention
+Position-wise Feed Forward Network
+
+Each sub-block is wrapped with:
+Residual connection
+Layer Normalization
+
+Input
+ → Masked Self-Attention
+ → Add & Norm
+ → Cross Attention
+ → Add & Norm
+ → Feed Forward Network
+ → Add & Norm
+ → Output
+
+
+3. Decoder Input Pipeline
+
+3.1 Tokenization and Right Shift
+Target sentence (Hindi example):
+
+Hum dost hai
+
+During training, decoder input is:
+<START> Hum dost hai
+
+Why right shift?
+So the model predicts next token
+Never sees the token it is supposed to predict
+
+3.2 Embedding + Positional Encoding
+Token Embedding (512 dim)
++ Positional Encoding (512 dim)
+(sequence_length × d_model)
+
+4. Masked Multi-Head Self-Attention (Decoder-only)
+
+Purpose
+Allow decoder tokens to attend only to past tokens
+Prevent future information leakage
+
+Masking Rule
+At position t, decoder can attend to:
+tokens ≤ t
+
+but not tokens > t.
+Mask Matrix (example for 4 tokens)
+0   -inf  -inf  -inf
+0    0    -inf  -inf
+0    0     0    -inf
+0    0     0     0
+
+After softmax:
+-inf → 0
+Future tokens get zero attention
+
+5. Cross Attention (Encoder–Decoder Attention)
+Purpose
+This is where translation actually happens.
+The decoder asks:
+“Which parts of the English sentence are relevant to what I’m generating now?”
+
+Inputs
+Query (Q) → from decoder hidden states
+Key (K), Value (V) → from encoder outputs
+
+Q = decoder
+K,V = encoder
+
+
+This allows:
+Word alignment
+Reordering (English → Hindi)
+Context-aware translation
+
+Without cross-attention, translation is impossible.
+
+6. Feed Forward Network (FFN)
+Structure (same for every position)
+
+FFN(x) = W2 · ReLU(W1 · x + b1) + b2
+
+Typical dimensions:
+W1: 512 → 2048
+W2: 2048 → 512
+
+Key Properties
+Applied independently to each token
+No interaction between positions
+Adds non-linearity and expressiveness
+
+
+7. Add & Norm (Residual + LayerNorm)
+Each sub-layer output is:
+LayerNorm(x + Sublayer(x))
+
+Why?
+Stabilizes training
+Improves gradient flow
+Enables deep stacking of decoder layers
+
+8. Final Linear Layer + Softmax (Token Prediction)
+After last decoder layer, we get:
+
+Y_norm ∈ ℝ^(1 × 512)
+
+Linear Projection
+Logits = Y_norm · W_vocab
+
+W_vocab: 512 × V
+V = vocabulary size (e.g., 30k–100k)
+
+Logits ∈ ℝ^(1 × V)
+
+Softmax → Probability Distribution
+P(token_i) = exp(logit_i) / Σ exp(logits)
+
+P("Hum")  = 0.25
+P("Main") = 0.20
+P("Dost") = 0.30
+...
+
+The model does NOT choose from infinite words.
+It chooses from a finite vocabulary.
+
+9. How the Next Token Is Chosen
+Common decoding strategies:
+Greedy decoding → pick max probability
+Beam search → keep top-k sequences
+Top-k / Top-p sampling → probabilistic
+Selected token is appended to the sequence.
+
+10. Training vs Inference
+
+Training Phase
+
+✔ Entire target sentence available
+✔ Decoder runs in parallel
+✔ Masking is applied
+✔ Teacher forcing is used
+
+Training =
+Non-autoregressive (parallel)
++ Masking
++ Teacher forcing
+
+Inference Phase
+
+✔ Only <START> initially
+✔ Decoder generates one token at a time
+✔ Mask still exists (future tokens don’t exist yet)
+✔ No teacher forcing
+
+Inference =
+Autoregressive
++ Masking
+
+11. Why Encoder Runs Only Once in Inference
+
+Encoder processes input sentence once
+Output is cached
+Decoder reuses encoder output at every step via cross-attention
+This makes inference efficient.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

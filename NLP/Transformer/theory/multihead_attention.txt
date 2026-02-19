@@ -23,7 +23,7 @@ In natural language:
 - A single attention pattern is too restrictive
 
 Multi-Head Attention solves this by allowing the model to look at the sentence from multiple perspectives.
--------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------
 2. What Multi-Head Attention Does
 
 Instead of computing ONE Self-Attention output (one perspective),
@@ -61,7 +61,7 @@ Each head gets:
 This allows heads to be cheaper and specialized.
 
 Step 2 — Linear projections per head  
-----------------------------------------------
+----------------------------------------------------------------------------
 For each head h:
 
     Qʰ = X × W_Qʰ
@@ -73,7 +73,7 @@ Each head learns DIFFERENT W_Q, W_K, W_V
 → Different views of the same input.
 
 Step 3 — Self-Attention inside each head  
-----------------------------------------
+----------------------------------------------------------------------
 Each head computes:
 
     Zʰ = Attention(Qʰ, Kʰ, Vʰ)

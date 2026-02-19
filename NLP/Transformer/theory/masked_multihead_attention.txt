@@ -29,6 +29,12 @@ softmax(−∞) = 0
 
 Therefore, attention weight becomes exactly zero → the model cannot use future tokens.
 
+Autoregressive : 
+Each output token depends on previously generated output tokens.
+
+Non-Autoregressive :
+All output tokens are generated independently and in parallel, without depending on previous outputs.
+
 
 3. Masking Behavior During Training vs Inference
 
@@ -38,6 +44,10 @@ Training Phase
 ✔ Decoder processes all positions in parallel
 ✔ But we must still prevent future leakage → mask is applied
 ✔ Decoder uses Teacher Forcing
+
+Token at position t
+can attend to positions ≤ t
+cannot attend to positions > t
 
 Training = Non-Autoregressive + Masking + Teacher Forcing
 
