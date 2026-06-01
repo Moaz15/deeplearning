@@ -3,20 +3,31 @@ Why Self-Attention is Needed in Transformers
 1.The Problem with Old Models (RNNs/LSTMs)
 
 RNNs and LSTMs process sentences sequentially — word by word. They read input in order (left to right), and each step depends on the previous one. This creates several problems:
+
 A. They are slow
 Because each step must wait for the previous one, the model cannot run in parallel. This makes training and inference slow.
+In O(n) complexity for sequences, you can't start calculating word 10 until word 9 is finished. This left GPUs (which love doing many things at once) sitting idle.
+
 B. They forget long-range relationships
 Even LSTMs, which include mechanisms to handle long-term memory, struggle to remember information that appeared many words earlier. The influence of earlier words fades as sentences get longer.
+This is often called the Vanishing Gradient problem. Even with the "gates" in LSTMs, the gradient (the signal used to learn) gets diluted over long distances.
+
 C. They suffer from a bottleneck
 At each step, the model must compress all previous context into a single hidden state vector. This bottleneck makes it difficult to store detailed or long-range information.
+Specifically, in Encoder-Decoder RNNs, the entire meaning of a 50-word sentence had to be squeezed into one fixed-length vector. 
+It’s like trying to summarize a whole novel in a single sentence—you're bound to lose the nuances.
 
 How Transformers Solve These Problems
 
 Transformers introduce a new mechanism called Self-Attention, which removes recurrence entirely.
+
 A. Parallel processing
 Transformers process all words at once instead of step-by-step. This allows massive parallelization and greatly improves speed.
+Because the model sees the whole sentence as a single "matrix" of data, it can calculate the relationships for every word simultaneously.
+
 B. Self-Attention captures relationships between any words
 Every word can directly connect to every other word, regardless of distance. This allows the model to understand long-range dependencies naturally and without information loss.
+
 C. Positional encoding replaces recurrence
 Since Transformers do not read words in order, they add positional encodings to each word embedding. This provides the model with information about the order of words in the sentence.
 
@@ -342,3 +353,49 @@ The Query and Key vectors must have the same dimension
 (otherwise Q·K wouldn’t even be possible)
 
 So d_q = d_k.
+
+
+TIME COMPLEXITY OF SELF-ATTENTION
+
+
+For a sequence of length n and hidden dimension d, the time complexity of the 
+self-attention layer is: O(n^2 * d)
+
+COMPUTATIONAL BREAKDOWN
+--------------------------------------------------------------------------------
+
+1. LINEAR PROJECTIONS: O(n * d^2)
+   Multiplying input X (n x d) by weights W_Q, W_K, W_V (d x d) to get Q, K, V.
+
+2. ATTENTION MATRIX: O(n^2 * d)
+   Computing the dot product of Q (n x d) and K^T (d x n) to generate the 
+   n x n attention matrix. This token-to-token comparison causes the n^2 scaling.
+
+3. APPLYING VALUES: O(n^2 * d)
+   Multiplying the Softmax matrix (n x n) by V (n x d) to create the final output.
+
+Dropping lower-order terms yields the dominant layer bottleneck: O(n^2 * d).
+
+--------------------------------------------------------------------------------
+SELF-ATTENTION VS. RNN
+--------------------------------------------------------------------------------
+
+| Layer Type     | Complexity per Layer | Sequential Operations | Max Path Length |
+|----------------|-----------------------|-----------------------|-----------------|
+| Self-Attention | O(n^2 * d)            | O(1)                  | O(1)            |
+| Recurrent (RNN)| O(n * d^2)            | O(n)                  | O(n)            |
+
+--------------------------------------------------------------------------------
+KEY TAKEAWAYS
+--------------------------------------------------------------------------------
+
+* THE QUADRATIC BOTTLENECK: Doubling sequence length n quadruples (2^2) memory and 
+  compute costs. This scales poorly for long contexts like books or full codebases.
+
+* PARALLELIZATION ADVANTAGE: Despite the high total compute, self-attention requires 
+  only O(1) sequential steps. This allows GPUs to process all tokens at once, 
+  whereas RNNs are bottlenecked by step-by-step O(n) sequential dependencies.
+
+* THE d VS n SHIFT: Historically, d > n made RNNs computationally expensive. In 
+  modern AI, where n ranges from 100k to millions of tokens, the n^2 factor dominates. 
+  This bottleneck led to innovations like FlashAttention and Mamba (State Space Models).
