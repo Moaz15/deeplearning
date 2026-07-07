@@ -1,0 +1,11 @@
+rnn -> sequential model designed to work on sequential data 
+why rnn first , why RNN over ANN 
+text input -> varying size 
+zero padding -> unnecssary computation 
+prediction problem 
+totally disregarding sequential data 
+
+
+memory feature in RNNs 
+
+forward propagation in RNN 

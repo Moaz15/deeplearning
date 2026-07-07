@@ -1,0 +1,143 @@
+RNNs are made for sequences.
+They process ordered data like (x(1), x(2), ..., x(\tau)) (words in a sentence, steps in a time series).
+
+Analogy with CNNs:
+CNNs are specialized for grids (images: width × height).
+RNNs are specialized for sequences (time/position steps).
+
+RNNs can handle long and variable-length inputs.
+Like CNNs can work with large images (and sometimes variable size), RNNs can work with long sequences and usually different sequence lengths
+
+Key idea enabling this: parameter (weight) sharing across time.
+Instead of learning separate weights for step 1, step 2, step 3, … an RNN uses the same weights at every time step.
+
+Why weight sharing matters (very important):
+
+Generalization to lengths not seen in training: if you used different weights for each position, you couldn’t handle longer/shorter sequences well.
+Same pattern can appear anywhere: example: “2009” can appear early or late in a sentence; the model should still recognize it.
+Statistical strength: learning a rule once helps at all positions.
+
+Why a fixed-length feedforward network is weaker for sequences:
+A normal fully connected network has different parameters for each input position, so it must learn “language rules” separately for word position 1, position 2, etc. That’s inefficient.
+
+1D temporal convolution (time-delay networks) is another way to share parameters, but it’s “shallow.”
+
+Convolution shares weights across time using a sliding kernel.
+But each output depends only on a small local window of inputs (nearby steps).
+
+RNNs share parameters differently and can model longer dependencies.
+
+In an RNN, each output/state depends on previous outputs/states.
+Repeating the same update rule creates a very deep computational graph across time (deep when “unrolled”).
+
+Notation clarification:
+
+They write sequences as vectors (x(t)) for (t = 1 \dots \tau).
+In practice training uses minibatches: many sequences at once, often with different lengths (they skip those indices to keep the math simple).
+
+“Time step” doesn’t always mean real time.
+It can just mean position in the sequence (word index).
+
+RNNs can be applied beyond 1D time.
+They can be applied across 2D data (e.g., images) or even have backward-in-time connections if the whole sequence is known beforehand (bidirectional idea).
+
+Computational graphs with cycles = recurrence.
+The chapter extends computation graphs to include loops, meaning a variable at time (t) influences itself at time (t+1). That’s the core “recurrent” concept.
+
+
+10.1 Unfolding Computational Graphs (Very Simple Explanation)
+
+1) What is a computational graph?
+- A computational graph is a “map of calculations”.
+- It shows how inputs and parameters (weights) are combined step-by-step to produce outputs and a loss.
+- In normal feedforward networks, this graph has no loops.
+
+2) Why RNNs have loops (recurrence)
+- RNNs reuse the same computation again and again for each time step.
+- The current state depends on the previous state, so there is a loop.
+
+Book’s basic recurrence:
+s(t) = f(s(t-1); θ)
+
+Meaning:
+- s(t): the “state” (memory) at time t
+- f: the update rule (same function each step)
+- θ: parameters/weights of f (same weights each step)
+
+It is “recurrent” because s(t) depends on s(t-1), which depends on s(t-2), etc.
+
+3) What does “unfolding” mean?
+- Unfolding means: “open the loop” and write the repeated computation step-by-step for a fixed number of time steps.
+- This turns the loop into a chain.
+
+Example: if τ = 3 steps
+s(3) = f(s(2); θ)
+s(2) = f(s(1); θ)
+
+Substitute s(2) into s(3):
+s(3) = f( f(s(1); θ) ; θ )
+
+Now it is not a loop anymore; it is a straight sequence of operations:
+s(1) -> s(2) -> s(3)
+
+Important point:
+- The same parameters θ are used at every step (weight sharing).
+- Unfolding makes it look like a deep network, but with repeated/shared weights.
+
+4) Adding an external input x(t) (more realistic)
+Often the state is updated using:
+- previous state
+- current input at time t
+
+Equation:
+s(t) = f(s(t-1), x(t); θ)
+
+Meaning:
+- x(t): input at time t (e.g., the t-th word)
+- s(t): updated memory after seeing x(t)
+
+In RNN notation, the state is usually called h (hidden state):
+h(t) = f(h(t-1), x(t); θ)
+
+5) What does the hidden state h(t) represent?
+- h(t) is a summary of everything the network has seen so far:
+  x(1), x(2), ..., x(t)
+- h(t) is a fixed-size vector, but the input history can be very long.
+- So h(t) is a “lossy summary”:
+  it keeps the most useful information for the task and may forget other details.
+
+Example:
+- For language modeling (predict next word), the RNN does not need to remember every word perfectly.
+- It needs to remember enough information to predict what comes next.
+- The hardest case is when we want to reconstruct the entire input sequence (autoencoders).
+
+6) Two ways to draw an RNN (important concept)
+A) Compact “circuit” view
+- Draw one RNN cell with a loop.
+- A delay symbol means: the state at time t influences the state at time t+1.
+
+B) Unfolded computational graph view
+- Draw one copy of the cell for each time step:
+  (x(1), h(0)) -> h(1)
+  (x(2), h(1)) -> h(2)
+  (x(3), h(2)) -> h(3)
+  ...
+- This graph size grows with sequence length.
+
+Unfolding is exactly the process of converting the compact loop diagram into this expanded chain.
+
+7) Why unfolding is useful (2 main advantages from the book)
+Advantage 1:
+- The model works for any sequence length.
+- You always apply the same “state transition” rule step-by-step.
+
+Advantage 2:
+- Same function f and same parameters θ at every time step (weight sharing).
+- So you learn one model that works across all time positions and different lengths.
+
+This reduces the number of parameters and improves generalization (works on sequence lengths not seen in training).
+
+8) Why unfolded graphs help with training
+- Forward pass: information flows forward in time (left to right).
+- Backward pass (BPTT): gradients flow backward through time (right to left).
+- The unfolded graph clearly shows the path along which gradients flow.

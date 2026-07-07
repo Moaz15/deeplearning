@@ -1,0 +1,178 @@
+PERCEPTRON 
+
+1) What is a Perceptron?
+------------------------
+- A perceptron is the simplest type of artificial neuron.
+- It is a linear classifier used for supervised learning (binary classification).
+- It predicts a class based on a weighted sum of inputs followed by an activation function.
+
+Typical output formats:
+- y_hat ∈ {0, 1}  (common in introductory ML)
+- or y_hat ∈ {-1, +1} (common in theory)
+
+Key limitation:
+- A single-layer perceptron can solve only linearly separable datasets.
+
+
+2) Perceptron Model (Mathematical Form)
+---------------------------------------
+Inputs:
+- x = [x1, x2, ..., xn]^T    (input vector / features)
+
+Parameters:
+- w = [w1, w2, ..., wn]^T    (weight vector)
+- b                          (bias)
+
+Linear combination (summation function):
+- z = w^T x + b
+  = w1*x1 + w2*x2 + ... + wn*xn + b
+
+Meaning:
+- weights (w): represent importance/contribution of each feature
+- bias (b): shifts the decision boundary
+
+
+3) Why is the Summation Function Linear?
+----------------------------------------
+- The perceptron computes a dot product w^T x, which is linear in x.
+- This linear form creates a linear decision boundary (a hyperplane).
+- Linearity makes the model simple, interpretable, and efficient.
+
+Because z is linear, the perceptron can only separate data that can be split by a straight boundary.
+
+
+4) Activation Function (Step / Threshold)
+-----------------------------------------
+Classic perceptron uses a step (Heaviside / threshold) function:
+
+Case A: output in {0,1}
+- f(z) = 1  if z >= 0
+         0  if z < 0
+
+Case B: output in {-1,+1}
+- y_hat = sign(z)
+
+Why activation is used:
+- It converts the continuous score z into a discrete class label.
+- It allows the model to perform classification (not regression).
+Note:
+- Step function is not differentiable, so classic perceptron is not trained via backprop/gradient descent.
+
+
+5) Decision Boundary (Geometry)
+-------------------------------
+Decision boundary is where the model is exactly unsure:
+
+- z = w^T x + b = 0
+
+This defines a hyperplane:
+- In 2D: a line
+- In 3D: a plane
+- In nD: a hyperplane
+
+It splits the input space into two half-spaces:
+- z >= 0  -> class 1 (or +1)
+- z < 0   -> class 0 (or -1)
+
+Important:
+- The boundary is linear; it cannot bend/curve to wrap around complex patterns.
+
+
+6) Perceptron Learning Algorithm (Training Rule)
+------------------------------------------------
+Goal:
+- Update weights/bias so that training examples are classified correctly.
+
+Initialize:
+- w = 0 vector (or small random values)
+- b = 0
+- choose learning rate η (eta)
+- choose number of epochs
+
+Training loop:
+For each epoch:
+  For each training example (x, y):
+    1) compute z = w^T x + b
+    2) predict y_hat = f(z)
+    3) compute error: δ = (y - y_hat)
+    4) update if misclassified (δ != 0):
+         w <- w + η * δ * x
+         b <- b + η * δ
+
+Stopping:
+- Run for fixed epochs OR stop early when no mistakes occur in an epoch (if separable).
+
+Intuition for why update works:
+- If y=1 but predicted 0: δ > 0, so w moves toward x (increases z next time).
+- If y=0 but predicted 1: δ < 0, so w moves away from x (decreases z next time).
+- Each mistake pushes the decision boundary toward reducing that mistake.
+
+
+7) Perceptron Convergence Theorem (Rosenblatt)
+----------------------------------------------
+Statement (informal):
+- If the training data is linearly separable, then the perceptron learning algorithm
+  is guaranteed to find a set of weights (w, b) that classifies all training points
+  correctly in a finite number of updates.
+
+Meaning of "converge":
+- updates stop (no misclassifications remain)
+- a separating hyperplane is found
+- further epochs make no changes
+
+If data is NOT linearly separable:
+- no perfect hyperplane exists that classifies all points correctly
+- perceptron may keep updating/oscillating
+- no guaranteed convergence and no stable perfect solution
+
+
+8) Loss Function View (Perceptron vs Logistic Regression)
+---------------------------------------------------------
+Classic perceptron:
+- Not typically presented as minimizing a smooth, differentiable loss.
+- Uses a rule-based update when prediction is wrong.
+
+Perceptron (hinge-like) loss often written with labels y ∈ {-1, +1}:
+- y_hat = sign(w^T x + b)
+
+Per-sample perceptron loss:
+- L(w; x, y) = 0                       if y*(w^T x + b) >= 0
+               - y*(w^T x + b)         if y*(w^T x + b) < 0
+
+Vectorized over dataset { (x_i, y_i) }:
+- L_total = Σ_i  max(0, - y_i*(w^T x_i + b))
+
+Properties:
+- piecewise linear
+- not differentiable everywhere
+- encourages correct classification (not probability outputs)
+
+
+9) Perceptron vs Logistic Regression (Quick Comparison)
+-------------------------------------------------------
+Perceptron:
+- Type: linear classifier
+- Output: hard class (0/1 or -1/+1)
+- Activation: step/sign
+- Learning: rule-based updates on mistakes
+- No probabilistic interpretation
+
+Logistic Regression:
+- Type: linear classifier
+- Output: probability in [0,1]
+- Activation: sigmoid
+- Learning: gradient descent minimizing log-loss
+- Has probabilistic interpretation
+
+
+10) Problems / Limitations of Perceptron
+----------------------------------------
+1) Works only for linearly separable data
+   - fails on XOR (classic example)
+2) No probability/confidence output (hard decisions only)
+3) Does not maximize margin (may find any separating line, not necessarily best)
+4) Step activation is non-differentiable (not suitable for backprop in deep nets)
+
+Conclusion:
+- Perceptron is a foundational model: simple, interpretable, and important historically.
+- Modern neural networks replace step with differentiable activations and use gradient-based optimization.
