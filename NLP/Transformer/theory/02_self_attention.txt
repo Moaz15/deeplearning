@@ -5,7 +5,7 @@ SELF-ATTENTION
 --------------------------------------------------------------------------------
 
 The embedding layer is a lookup table: ONE row per word in the vocabulary
-(see word_token_vector.txt). Every time a word appears we fetch the same row,
+(see 01_word_token_vector.txt). Every time a word appears we fetch the same row,
 fixed during training, before this sentence existed.
 
 Now read these two sentences:
@@ -189,7 +189,7 @@ Two things are lost, and much of the architecture exists to pay for them.
 Order. Recurrence encoded position for free through the step number. Processing
 all words at once treats the sentence as a bag of words, so "Moaz killed Lion"
 and "Lion killed Moaz" look identical. Position has to be added back explicitly
-(see positional_encoding.txt).
+(see 03_positional_encoding.txt).
 
 Cost. Connecting every word to every other word means n x n comparisons instead
 of n steps. Section 8 works out what that costs.
@@ -686,7 +686,7 @@ with a token that exists purely to square off a tensor.
 
 Future words. When the model generates text one token at a time, position t must
 not see positions after t, or it would be predicting a word it has already been
-shown. That mask is the subject of masked_multihead_attention.txt; the mechanism
+shown. That mask is the subject of 08_masked_multihead_attention.txt; the mechanism
 below is the same one it uses.
 
 
@@ -817,19 +817,19 @@ permuted the same way, with identical values - the mechanism is permutation
 equivariant. "Moaz killed Lion" and "Lion killed Moaz" produce the same set of
 vectors, just reordered, because nothing in Q K^T or the blend refers to
 position. Section 2.6 flagged this as the price of dropping recurrence.
-    -> positional_encoding.txt
+    -> 03_positional_encoding.txt
 
 One set of W_Q, W_K, W_V produces one notion of relevance per layer, so a single
 layer cannot track grammatical agreement and topical similarity at the same time.
 Running several attentions in parallel over slices of d_model fixes it.
-    -> multihead_attention.txt
+    -> 04_multihead_attention.txt
 
 Q, K and V all come from the same sequence, which is what "self" means. Taking Q
 from one sequence and K, V from another is what connects an encoder to a decoder.
-    -> cross_attention.txt
+    -> 09_cross_attention.txt
 
 The causal mask that section 7 deferred.
-    -> masked_multihead_attention.txt
+    -> 08_masked_multihead_attention.txt
 
 ================================================================================
 
