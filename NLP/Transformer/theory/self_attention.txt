@@ -1,654 +1,892 @@
-Why Self-Attention is Needed in Transformers
-
-1. The Limitations of Recurrent Models (RNNs & LSTMs)
-
-Traditional sequence models process text sequentially (word-by-word, from left to right), where each step depends directly on the hidden state of the previous step. This sequential nature introduces three major flaws:
-
- A. The Parallelization Bottleneck (Slow Training)
-
-The Issue: Because step t requires the output of step t-1, the model cannot run computations in parallel.
-Complexity: For a sequence of length n, the computational complexity is O(n) sequential steps. For example, you cannot calculate the embeddings for word 10 until word 9 is completely finished.
-Hardware Inefficiency: Modern GPUs are designed for massive parallel matrix multiplications. Sequential processing leaves these powerful chips sitting idle, severely bottlenecking training and inference speeds.
-
- B. Vanishing Gradients (Forgetting Long-Range Relationships)
-
-The Issue: As the distance between related words increases, the mathematical signal (gradient) used to train the model gets diluted.
-The LSTM Limitation: Even though LSTMs utilize internal "gates" to better preserve long-term memory, they still suffer from the Vanishing Gradient Problem over very long sequences. The influence of early words inevitably fades as the sentence grows.
-
- C. The Information Bottleneck
-
-The Issue: At each step, an RNN must compress all previous context into a single, fixed-length hidden state vector.
-The Encoder-Decoder Flaw: In sequence-to-sequence tasks (like translation), the entire meaning of a 50-word sentence is squeezed into one final vector before being handed to the decoder.
-
-> Analogy: It is like trying to summarize a complex novel in a single sentence—you are bound to lose critical details and nuances.
-
-
- 2. How Transformers Solve These Problems
-
-The Transformer architecture completely discards recurrence and replaces it entirely with a mechanism called Self-Attention.
-
-
-[Old RNN Approach]       Word 1 ──> Word 2 ──> Word 3 ──> Word 4 (Sequential)
-[Transformer Approach]   [Word 1, Word 2, Word 3, Word 4] Processed Simultaneously
-
-
-
- A. Massive Parallel Processing
-
-The Solution:Transformers ingest the entire sequence of words simultaneously as a single matrix of data rather than step-by-step.
-The Benefit: This allows the GPU to compute the relationships for every single word at the exact same time, reducing the sequential operation complexity from O(n) to O(1). This drastically accelerates training speeds.
-
- B. Direct Long-Range Connections via Self-Attention
-
-The Solution: The Self-Attention mechanism allows every word to look at, score, and connect with every other word in the sentence directly, regardless of how far apart they are.
-The Benefit: Because the path length between any two tokens is always exactly one operation, the model captures long-range dependencies naturally without any information decay or vanishing gradients.
-
- C. Positional Encoding (Replacing Recurrence)
-
-The Solution: Since Transformers process all words simultaneously, they inherently lose the concept of word order (treating a sentence like a "bag of words"). To fix this, Transformers add a unique Positional Encoding vector to each word embedding.
-The Benefit: This injects a distinct mathematical signature that tells the model exactly where each word sits in the sequence, preserving syntax and word order without needing sequential loops.
-
-
-2. What Self-Attention Does
-
-Self-Attention allows every word to look at all other words in the sentence and decide:
-“Which words are most relevant for understanding my meaning?”
-It lets the model pick out helpful context automatically.
-
-Example:
-Sentence: “Apple launched a new phone”
-
-When processing the word “Apple”, the model must decide if it refers to a fruit or a company.
-The word “phone” provides strong context, so “Apple” pays more attention to it.
-This helps the model understand that “Apple” refers to the company, not the fruit.
-
-Self-Attention basically allows words to use each other as clues, no matter how far apart they are.
-
-3. Working of Self-Attention :
-
-STATIC vs CONTEXTUAL EMBEDDINGS
-
-What Are Static Embeddings?
-Examples: Word2Vec, GloVe, FastText
-Each word has one fixed vector.
-“Bank” (financial) and “bank” (river bank) → same embedding.
-“Apple” (fruit) and “Apple” (company) → same vector.
-No sentence awareness.
-
-money  → e_money
-bank   → e_bank
-grows  → e_grows
-These embeddings never change regardless of the sentence.
-
-Why Static Embeddings Are Not Enough
-
-Word meanings depend on context:
-“bank” in money bank grows
-“bank” in river bank flows
-Static embedding cannot tell the difference
-
-Enter Self-Attention → Contextual Embeddings
-
-Self-Attention transforms each embedding based on how strongly it relates to other words in the same sentence.
-The update rule is:
-                ei(new)​=j∑​wij​⋅Vj​
-
-w_ij = attention weight from word i to word j
-Vⱼ = Value vector of word j
-(computed as 𝑉𝑗 =𝐸𝑗×𝑊v , not the static embedding)
-This process turns fixed embeddings into context-aware embeddings, because each updated vector is a weighted mixture of the Value vectors of all other words in the sentence.
-
-
-Sentence 1
-money attends → 0.7 money + 0.2 bank + 0.1 grows
-bank  attends → 0.25 money + 0.7 bank + 0.05 grows
-grows attends → 0.1 money + 0.2 bank + 0.7 grows
-
-Contextual Embeddings (Sentence 1)
-y_money = 0.7*V_money + 0.2*V_bank + 0.1*V_grows
-y_bank  = 0.25*V_money + 0.7*V_bank + 0.05*V_grows
-y_grows = 0.1*V_money + 0.2*V_bank + 0.7*V_grows
-
-Sentence 2 
-
-river attends → 0.8 river + 0.15 bank + 0.05 flows
-bank  attends → 0.2 river + 0.78 bank + 0.02 flows
-flows attends → 0.4 river + 0.01 bank + 0.59 flows
-
-Contextual Embeddings (Sentence 2)
-y_river = 0.8*V_river + 0.15*V_bank + 0.05*V_flows
-y_bank  = 0.2*V_river + 0.78*V_bank + 0.02*V_flows
-y_flows = 0.4*V_river + 0.01*V_bank + 0.59*V_flows
-
-Contextual embeddings solve the biggest linguistic problem:
-One word = multiple meanings.
-Transformers generate embeddings that depend on the entire sentence, not just the word itself.
-
-Static embedding = dictionary meaning
-Contextual embedding = meaning in the sentence (through Self-Attention)
-
-Self-Attention answers one key question:
-“When understanding this word, which other words should I pay attention to, and by how much?”
-
-It solves:
-✅ Long-range dependency
-✅ Multiple meanings (polysemy)
-✅ Parallel computation (no recurrence)
-✅ Context-aware representations
-
-
-4. Introducing Q, K, V (Query, Key, Value)
-
-Until now, we saw what Self-Attention does:
-It lets each word look at all other words and decide how much to use them to understand its meaning.
-
-But how does a word decide which other words are useful?
-To make this decision, Transformers give three different versions of each word:
-
-a- Query (Q) — What the word is looking for
-
-This is like the word asking a question:
-“Who can help me understand myself?”
-“What clues do I need?”
-
-Example:
-If the word is Apple, its Query represents:
-“Help me decide if I'm a fruit or the company.”
-
-b- Key (K) — What each word offers
-
-Every word also carries a “tag” that represents what kind of information it contains.
-
-Examples:
-“phone” offers tech-related meaning
-“tree” offers nature-related meaning
-“money” offers financial meaning
-“river” offers water/environment meaning
-Keys tell other words:
-“This is what I represent.”
-
-c- Value (V) — The actual information each word provides
-
-If a word is selected as important, its Value holds the information that gets added into the contextual meaning.
-Think of Value as:
-“If you choose me, here is the meaning I will contribute.”
-
-Putting Q, K, V Together (A Simple Story)
-
-Imagine we want to understand the meaning of the word bank.
-
-Step 1 — “bank” creates a Query
-Its Query asks:
-“Am I a financial bank or a river bank? What clues do I need?”
-
-Step 2 — All other words offer their Keys
-“money” offers: “I'm related to finance.”
-“river” offers: “I'm related to nature/water.”
-“flows” offers: “I'm related to movement in water.”
-
-Step 3 — The Query of “bank” matches each Key
-
-Q(bank) matches strongly with K(money) → financial context
-Q(bank) matches weakly with K(grows) → not helpful
-Q(bank) matches strongly with K(river) → water context
-
-Step 4 — Only the useful words contribute their Values
-
-If bank attends more to “money”, its Value vector becomes financial
-If it attends more to “river”, its Value vector becomes nature-related
-
-This is how:
-
-“bank” → finance meaning in one sentence
-“bank” → river meaning in another sentence
-
-Q, K, V allow Self-Attention to determine meaning based on context.
-
-Why Q, K, V Are Needed
-
-Before this step, every word had only one embedding vector.
-But each word has three roles inside attention:
-
-It must ask things → Query
-It must represent itself → Key
-It must provide meaning → Value
-
-So the Transformer creates Q, K, V by applying three learnable transformations to the original word embedding.
-
-This allows the model to learn:
-What questions a word should ask (Q)
-What information a word carries (K)
-What meaning a word provides when selected (V)
-
-
-5. How Attention Scores Are Calculated (Q, K → Weights → V)
-
-Once every word has its Query (Q), Key (K), and Value (V), Self-Attention must determine which words matter for understanding the meaning of the current word.
-This happens in three clear steps.
-
-Q = E × W_Q
-K = E × W_K
-V = E × W_V
-
-These matrices are trained along with the whole Transformer.
-
-5.1 Step 1 — Similarity (Q compared with K)
-
-To understand a specific word (say “river”), the model compares:
-Q_river → what “river” is looking for
-with
-K_river, K_bank, K_flows → what each word offers
-
-This comparison produces raw similarity scores, which answer:
-“How relevant is each word to ‘river’?”
-
-sim(river, river)
-sim(river, bank)
-sim(river, flows)
-
-5.2 Step 2 — Softmax (Scores → Attention Weights)
-
-Raw scores can be:
-negative
-very large
-unbounded
-
-Softmax converts these into normalized weights:
-positive values
-sum to 1
-represent “how much attention each word deserves”
-
-w_river,river = 0.80
-w_river,bank  = 0.15
-w_river,flows = 0.05
-
-These weights come directly from the Q–K similarity.
-
-5.3 Step 3 — Weighted Sum (THIS IS WHERE V IS USED)
-
-Once attention weights are known, the model gathers information from the other words.
-This information is taken from each word’s Value vector (V).
-
-Each Value vector is computed as:
-V_word = E_word × W_V
-
-y_river = 0.80 * V_river
-        + 0.15 * V_bank
-        + 0.05 * V_flows
-
-Output (Y) = Softmax( (Q * K^T) / sqrt(d_k) ) * (E_static * W_V)
-
-This is the moment where:
-Q asked the question
-K decided relevance
-V provided the actual meaning
-
-The final Self-Attention output is a linear combination of Value vectors because attention weights represent how much each word should contribute.
-
-A weighted sum is:
-the natural way to aggregate information,
-smooth and differentiable (necessary for training),
-stable,
-and allows contextual blending of meanings.
-
-Q identifies what information is needed,
-K tells how relevant each word is,
-V provides the actual meaning,
-and the linear combination mixes these meanings proportionally.
-
-
-6. Why We Divide by √dₖ (Scaled Dot-Product Attention)
-
-After calculating similarity scores using Q · K, the Transformer applies Softmax to convert these scores into attention weights.
-But before sending these scores to Softmax, we must scale them down.
-
-Why?
-Because without scaling, Self-Attention becomes unstable.
-
-6.1 The Core Problem: Dot-Products Become Too Large
-
-When Q and K are high-dimensional vectors (e.g., 64, 128, 512 dimensions), their dot-product naturally grows large.
-Example:
-If dₖ = 64, dot-products might be around ~8
-If dₖ = 512, dot-products might explode to ~22 or more
-Large dot-products cause issues:
-
-A. Softmax Becomes Too Sharp
-If the input numbers are large, Softmax produces outputs like:
-[0.99999, 0.00001, 0.00000]
-One word gets almost all the attention
-Other words get almost zero
-The model stops learning useful patterns
-Gradients vanish (bad for training)
-
-B. Attention Becomes Overconfident
-The system picks one word as “the only important one”
-Subtle relationships are lost
-Meaning becomes brittle and unstable
-
-6.2 The Solution: Scale the Dot-Product by √dₖ
-
-To avoid exploding similarity scores, the Transformer divides by: √dₖ
-This ensures the values passed into Softmax stay in a reasonable range, no matter how large dₖ is.
-Example:
-
-without scaling:   Q·K = 22  → Softmax = extremely sharp  
-with scaling:      22 / √512 ≈ 0.97  → Softmax = normal, stable
-
-6.3 Why Specifically √dₖ?
-
-Because:
-Dot-products of random vectors have variance proportional to dₖ
-Dividing by √dₖ normalizes the variance to ~1
-
-This keeps the distribution stable, and training becomes smooth and reliable.
-
-6.4 Intuitive Explanation
-
-Think of Q and K as huge vectors.
-More dimensions → more random noise → larger dot-product
-Softmax hates large, spiky numbers
-Scaling by √dₖ “shrinks” the numbers to a manageable size
-So the system keeps behaving properly regardless of embedding size.
-
-6.5 Summary for Notes
-
-Dot-products grow with vector dimension, which causes Softmax to produce overly sharp, unstable attention weights.
-Dividing by √dₖ scales the values back to a healthy range, stabilizing learning and ensuring smooth gradients.
-This simple trick is why Self-Attention works reliably even with very large vector sizes.
-
-Why do we divide by √dₖ and not √d_q or √d_v?
-
-Because the dot-product is computed between Q and K, and its variance grows with the size of K (which is the same as the size of Q).
-Values (V) never enter the dot-product, so d_v does not matter.
-
-The variance of this dot-product depends on how many terms are in the sum → that number is d_k
-So the dot-product naturally grows in magnitude with dₖ.
-That’s why we scale by √dₖ.
-
-In practice: d_q = d_k always (by design)
-In Transformers:
-The Query and Key vectors must have the same dimension
-(otherwise Q·K wouldn’t even be possible)
-
-So d_q = d_k.
-
-
-                    TIME COMPLEXITY OF SELF-ATTENTION
+SELF-ATTENTION
 ================================================================================
 
-For a sequence of length n and hidden dimension d, the total time complexity 
-of a self-attention layer is dominated by: O(n^2 * d)
-
-RULE OF THUMB FOR MATRIX MATH:
-Multiplying a matrix of size (A x B) by a matrix of size (B x C) takes 
-roughly (A * B * C) total operations.
-
---------------------------------------------------------------------------------
-1. THE COMPUTATIONAL BREAKDOWN (STEP-BY-STEP STORY)
+1. The Problem: One Word, Many Meanings
 --------------------------------------------------------------------------------
 
-ACT 1: THE TRANSFORMATION MOLDS(Linear Projections) --> O(n * d^2)
-* What's happening: The raw words arrive. Every word must be prepared for three 
-  different roles: a Query (what it wants), a Key (what it offers), and a Value 
-  (its actual content).
-* The Math: The input matrix X is (n x d). The three weight matrices (W_Q, W_K, 
-  W_V) are each (d x d).
-* Operations: n words * d traits * d mold dimensions = (n * d^2) per matrix. 
-  For all three matrices, it is 3 * n * d^2. We drop the constant 3, 
-  leaving O(n * d^2).
+The embedding layer is a lookup table: ONE row per word in the vocabulary
+(see word_token_vector.txt). Every time a word appears we fetch the same row,
+fixed during training, before this sentence existed.
 
-ACT 2: THE SPEED-DATING GRID(Attention Matrix) --> O(n^2 * d)
-* What's happening: Every word needs to check its compatibility with every 
-  other word to find the best context. The factory lays out a massive grid.
-* The Math: You multiply the Query matrix Q (n x d) by the transposed Key 
-  matrix K^T (d x n).
-* Operations: n words * d traits * n other words = (n^2 * d). 
-  This creates the final (n x n) attention scorecard grid. THIS IS THE BOTTLENECK.
+Now read these two sentences:
 
-ACT 3: GATHERING THE TREASURE(Applying Values) --> O(n^2 * d)
-* What's happening: Each word looks at its row in the (n x n) scorecard grid 
-  and collects its share of informational "treasure" from the Value matrix (V).
-* The Math: You multiply the scorecard grid (n x n) by the Value matrix V (n x d).
-* Operations: n grid rows * n grid columns * d value traits = (n^2 * d).
+    Sentence 1:  money bank grows
+    Sentence 2:  river bank flows
 
-FINDING THE WINNER:
-Total Work = (n * d^2) + (n^2 * d) + (n^2 * d)
-In modern AI, the sequence length (n) is massive compared to the notebook 
-size (d). The terms with n^2 grow the fastest, making the final complexity O(n^2 * d).
+"bank" is a financial institution in the first and the edge of a river in the
+second. The lookup table hands us the same vector both times.
+
+The model receives identical input for two different meanings. No later layer
+can recover the difference, because it was never in the input.
+
+This is not an edge case. "apple" is a fruit or a company. "it" points to a
+different noun in every sentence. "not" flips a word that may sit far away.
+
+Vectors that never change are called STATIC embeddings (Word2Vec, GloVe,
+FastText): one word, one fixed vector, chosen without seeing the sentence.
+That is a dictionary entry. But we do not read dictionary entries, we read
+sentences.
 
 
---------------------------------------------------------------------------------
-2. SELF-ATTENTION VS. RNN (THE CORE TRADE-OFF)
---------------------------------------------------------------------------------
+1.1 What We Actually Need
+--------------------------
 
-* THE RNN PROBLEM: 
-  An RNN takes O(n * d^2) total math operations. While this looks cheaper for 
-  short sentences, it requires O(n) sequential steps. You cannot process word 10 
-  until word 9 is completely finished. This forces powerful GPUs to sit idle.
+The vector for "bank" must be DIFFERENT in the two sentences. A vector that
+depends on the sentence around it is called a CONTEXTUAL embedding.
 
-* THE SELF-ATTENTION SOLUTION: 
-  Self-Attention requires more raw calculations overall, but it features O(1) 
-  sequential steps. Because there is no step-by-step history dependency, the 
-  GPU can compute the relationships for every single word at the exact same time.
+Notice how you disambiguated "bank" yourself: you used the other words.
+"money" told you finance, "river" told you water. So the recipe is:
 
-SUMMARY: Self-Attention trades more total math (n^2) for flawless parallelism.
+    the new vector for a word
+        = a blend of the sentence's word vectors,
+          each contributing in proportion to how relevant it is
+
+For word i:
+
+    new_i = sum over j of ( w_ij * V_j )
+
+    w_ij = how much word i pays attention to word j
+    V_j  = the vector word j contributes when attended to (derived from j's
+           static embedding, not the embedding itself; see section 3)
+
+The weights are positive and sum to 1 across j, which makes each new vector a
+proper weighted average.
 
 
---------------------------------------------------------------------------------
-3. WHY THIS MATTERS TODAY (THE d VS. n SHIFT)
---------------------------------------------------------------------------------
+1.2 Watching It Work
+---------------------
 
-* THE PAST: When Transformers came out, sentences (n) were short (~512 tokens) 
-  but hidden sizes (d) were large (~1024). Since d > n, the O(n * d^2) part 
-  felt heavier.
-  
-* THE PRESENT: Today, we feed entire books or huge codebases into LLMs. The 
-  sequence length (n) scales into hundreds of thousands or millions of tokens.
+Every word gets its own row of weights. Here is the row for "bank" in each
+sentence:
 
-* THE QUADRATIC WALL: Because n is squared, doubling your document length 
-  doesn't double your compute time—it QUADRUPLES it (2^2 = 4). 
+    Sentence 1:  bank -> 0.25 money   0.70 bank   0.05 grows
+                 new_bank = 0.25*V_money + 0.70*V_bank + 0.05*V_grows
 
-This exact limitation is why the AI industry relies on hardware hacks like 
-FlashAttention, or entirely new non-transformer architectures like Mamba 
-(State Space Models) to get rid of the n^2 penalty completely.
+    Sentence 2:  bank -> 0.20 river   0.78 bank   0.02 flows
+                 new_bank = 0.20*V_river + 0.78*V_bank + 0.02*V_flows
+
+The row pulled from the lookup table was identical. The two results are not,
+because a quarter of the first blend came from "money" and a fifth of the
+second came from "river".
+
+    Static embedding     = meaning in the dictionary
+    Contextual embedding = meaning in this sentence
+
+This is SELF-ATTENTION. "Attention" because each word decides how much to look
+at every other word; "self" because those words are in the same sentence.
+
+All of it assumed the weights w_ij were handed to us. They are not. Producing
+them is the whole problem:
+
+    When understanding this word, which other words should I look at,
+    and by how much?
+
+Sections 3 to 5 answer that. But first: we brought in context by looking at
+every word at once. There is an older and more obvious way to do it, and it is
+worth seeing why it was abandoned.
+
 ================================================================================
 
+2. Why Not Just Read the Sentence in Order?
+--------------------------------------------------------------------------------
 
+Section 1 asked for context. There is an obvious way to get it: read the sentence
+one word at a time, carrying along everything seen so far. That is a Recurrent
+Neural Network (RNN), and it was the standard answer for years.
 
-Practice Questions: 
 
-Q1: What are the exact dimensions of matrices Q, K, and V given a batch size 
-    of 1, sequence length 'n', and embedding dimension 'd'? 
-A:  * Q (Query):  (n x d)
-    * K (Key):    (n x d)
-    * V (Value):  (n x d)
-    (Note: This assumes we are projecting into the same dimension d, meaning 
-    d_q = d_k = d_v = d).
+2.1 What Recurrence Does
+------------------------
 
-Q2: Why must the Query (Q) and Key (K) vectors have the exact same dimension, 
-    while the Value (V) vector could theoretically have a different dimension?
-A:  Because we calculate the similarity matrix by taking the dot product of Q 
-    and K^T. For matrix multiplication (n x d_k) * (d_k x n) to work, their inner 
-    dimensions must match. 
-    The Value matrix (V) is applied later via a separate multiplication 
-    (n x n) * (n x d_v). Since it only interacts with the scorecard grid's 
-    sequence length dimension, its hidden dimension (d_v) could technically 
-    be anything without breaking the math.
+An RNN keeps one vector, the hidden state h, and updates it at every word:
 
-Q3: What happens to the gradients during backpropagation if you completely 
-    remove the scaling factor (divide by sqrt(d_k)) in the attention formula?
-A:  If d_k is large, the dot products of Q and K^T will explode to high magnitudes. 
-    Passing large numbers into Softmax pushes the outputs to extreme values 
-    (e.g., 1 for the highest score, 0 for all others). 
-    The derivative (gradient) of Softmax near 0 or 1 is practically zero. This 
-    causes the "Vanishing Gradient" problem, meaning the model stops learning 
-    and the weights W_Q, W_K, and W_V will fail to update during training.
+    h_t = f( h_(t-1) , x_t )
 
+    x_t = embedding of the word at position t
+    h_t = everything understood up to position t
 
-Q4: If you swap the positions of Word 2 and Word 5 in an input sentence, 
-    how does a raw Self-Attention layer's output change?
-A:  Raw Self-Attention is completely permutation-invariant (order-blind). 
-    If you swap Word 2 and Word 5 in the input, their corresponding output 
-    vectors will be calculated exactly the same way, just swapped in their 
-    final positions. The layer treats the sentence as a bag of words unless 
-    Positional Encodings are explicitly added to the static embeddings first.
+Reading "money bank grows":
 
-Q5: Why do we use a weighted sum of Value vectors (V) for the final output 
-    instead of just returning the raw attention scorecard weights?
-A:  The attention weights are just a matrix of probabilities (scalars summing 
-    to 1 per row) indicating *who to look at*. They contain no semantic text data 
-    themselves. We must use these weights to scale the Value vectors (V) so 
-    we can blend actual token features into a new, context-rich representation.
+    h_1 = f(h_0, money)     has seen: money
+    h_2 = f(h_1, bank)      has seen: money bank
+    h_3 = f(h_2, grows)     has seen: money bank grows
 
-Q6: Why is Self-Attention considered O(1) sequential operations, while RNNs 
-    are O(n)? Explain what this means for hardware.
-A:  In an RNN, step 10 depends directly on the hidden state vector from step 9. 
-    This forces sequential O(n) execution—meaning execution happens one word 
-    at a time, lineally. 
-    In Self-Attention, because the entire input sentence is packaged into a 
-    single matrix X, the transformations and matrix products for all words 
-    can be calculated in a single parallel step, O(1), utilizing thousands 
-    of GPU cores simultaneously.
+This genuinely solves section 1. h_2 represents "bank" after "money" was read, so
+it is no longer the fixed dictionary vector. Word order comes for free too, since
+a word's position is just its step number.
 
-Q7: If Self-Attention scales at O(n^2 * d) time complexity, what is its space 
-    (memory) complexity, and why is it a problem for long documents?
-A:  The space complexity is O(n^2) because calculating Softmax requires 
-    materializing and storing the intermediate (n x n) attention matrix in 
-    GPU memory. If a sequence length (n) is 100,000 tokens, storing a single 
-    float-precision 100,000 x 100,000 matrix requires roughly 40 Gigabytes of 
-    VRAM just to hold a single layer's attention scorecard, causing quick 
-    Out-Of-Memory (OOM) crashes.
+Recurrence works. The problem is what it costs.
 
-"While quadratic time complexity makes processing long documents expensive and 
-slow, quadratic space complexity is the true operational killer. Memory limits 
-force an instant crash (OOM), which is why engineering breakthroughs like 
-FlashAttention focus primarily on eliminating the need to store that (n x n) 
-matrix in memory, converting a hard hardware constraint back into a manageable 
-compute problem."
 
+2.2 Failure 1 - A Word Only Sees Its Left Side
+----------------------------------------------
 
+h_t is built from words 1..t, so word t cannot use anything after it.
 
-This is an incredibly solid, clean, and intuitive foundation for your notes. You've hit all the right conceptual notes.
+    "money bank grows"        "money" is first and gets no context at all
+    "the bank of the river"   when "bank" is processed, "river" is unread
 
-Now, let's bridge the gap between the concept and the exact linear algebra. We will use a toy example, translate the words into simple matrices, and walk through the exact matrix multiplication steps without getting bogged down in hyper-complex math.
+Meaning does not respect reading order. The clue that disambiguates a word sits
+to its right just as often as to its left.
 
----
+The usual patch is a bidirectional RNN: run a second RNN right-to-left and
+concatenate the two hidden states. That gives each word a left summary and a
+right summary glued together - two one-sided views, never a single view in which
+"bank" weighs "money" and "river" against each other at once.
 
-## 1. The Setup: Our Toy Example
 
-Let's use a short 3-word sentence ($n = 3$):
+2.3 Failure 2 - Distance Weakens the Link
+-----------------------------------------
 
-> **"money bank grows"**
+For word 1 to influence word 50, its signal passes through 49 updates of h, each
+one multiplying and squashing it. The path length between two words is their
+distance in the sentence.
 
-To keep the math clean, we'll set our embedding dimension to $d = 2$.
+Training sends the gradient back along that same path, shrinking it at every
+step. This is the vanishing gradient problem, and it means the pairs that train
+worst are the ones furthest apart - exactly where context is hardest to guess.
 
-### Step 1: The Input Matrix ($X$)
+LSTMs and GRUs add gates that let the state pass through more cleanly, which
+stretches the usable range. It does not remove the limit: the path is still 49
+steps long, so influence still fades as sentences grow.
 
-First, we turn our words into static embedding vectors.
 
-* **"money"** $\rightarrow [1, 0]$
-* **"bank"** $\rightarrow [0, 1]$
-* **"grows"** $\rightarrow [1, 1]$
+2.4 Failure 3 - No Parallelism
+------------------------------
 
-Stacked together, our input matrix $X$ has a shape of $(3 \times 2)$ (Sequence Length $\times$ Embedding Dim):
+h_t needs h_(t-1). Word 10 cannot be computed until word 9 is finished, so a
+sentence of length n takes n sequential steps regardless of available hardware.
 
-$$X = \begin{pmatrix} 1 & 0 \\ 0 & 1 \\ 1 & 1 \end{pmatrix} \begin{array}{l} \text{-- money} \\ \text{-- bank} \\ \text{-- grows} \end{array}$$
+GPUs are built for large parallel matrix multiplications and sit mostly idle
+waiting. Training time is bounded by sentence length rather than by compute.
 
-### Step 2: The Projection Matrices ($W_Q, W_K, W_V$)
 
-The model learns three small matrices of weights to create our Queries, Keys, and Values. For this example, let's assume the trained weights are:
+2.5 The Escape
+--------------
 
-$$W_Q = \begin{pmatrix} 1 & 0 \\ 0 & 1 \end{pmatrix}, \quad W_K = \begin{pmatrix} 0 & 1 \\ 1 & 0 \end{pmatrix}, \quad W_V = \begin{pmatrix} 2 & 0 \\ 0 & 2 \end{pmatrix}$$
+All three failures share one cause: information travels between words only by
+passing step by step through h.
 
----
+Attention was first bolted onto RNNs to relieve this. In translation, the encoder
+had to squeeze an entire sentence into one final hidden state before the decoder
+saw it; attention let the decoder look back at every encoder state instead of
+that single summary. The Transformer took the stronger position - remove
+recurrence entirely and let attention carry all movement of information. Hence
+the paper's title, "Attention Is All You Need".
 
-## 2. Step-by-Step Matrix Calculations
+    RNN         word1 -> word2 -> word3 -> word4     n steps, one direction
+    Attention   [word1, word2, word3, word4]         1 step, every pair
 
-### Act 1: Generating $Q$, $K$, and $V$ Matrices
+Every pair of words is now one operation apart in both directions, and all words
+are computed at the same time.
 
-We multiply our input matrix $X$ by each weight matrix.
 
+2.6 The Price
+-------------
 
-$$\text{Formula: } Q = XW_Q, \quad K = XW_K, \quad V = XW_V$$
+Two things are lost, and much of the architecture exists to pay for them.
 
-* **Queries ($Q$):**
+Order. Recurrence encoded position for free through the step number. Processing
+all words at once treats the sentence as a bag of words, so "Moaz killed Lion"
+and "Lion killed Moaz" look identical. Position has to be added back explicitly
+(see positional_encoding.txt).
 
-$$Q = \begin{pmatrix} 1 & 0 \\ 0 & 1 \\ 1 & 1 \end{pmatrix} \begin{pmatrix} 1 & 0 \\ 0 & 1 \end{pmatrix} = \begin{pmatrix} 1 & 0 \\ 0 & 1 \\ 1 & 1 \end{pmatrix}$$
+Cost. Connecting every word to every other word means n x n comparisons instead
+of n steps. Section 8 works out what that costs.
 
+================================================================================
 
-* **Keys ($K$):**
+3. Introducing Q, K, V (Query, Key, Value)
+--------------------------------------------------------------------------------
 
-$$K = \begin{pmatrix} 1 & 0 \\ 0 & 1 \\ 1 & 1 \end{pmatrix} \begin{pmatrix} 0 & 1 \\ 1 & 0 \end{pmatrix} = \begin{pmatrix} 0 & 1 \\ 1 & 0 \\ 1 & 1 \end{pmatrix}$$
+Section 1 left one thing undefined: the weight w_ij, how much word i should pay
+attention to word j. Everything else followed from it.
 
+To produce that weight we need a score for "how relevant is word j to word i".
+We already have a vector per word, so the obvious move is to compare the
+embeddings directly:
 
-* **Values ($V$):**
+    score(i, j) = E_i . E_j
 
-$$V = \begin{pmatrix} 1 & 0 \\ 0 & 1 \\ 1 & 1 \end{pmatrix} \begin{pmatrix} 2 & 0 \\ 0 & 2 \end{pmatrix} = \begin{pmatrix} 2 & 0 \\ 0 & 2 \\ 2 & 2 \end{pmatrix}$$
+That fails for three reasons.
 
+Relevance is directional, a dot product is not.
+    E_i . E_j is always equal to E_j . E_i. So "bank" attending to "river" would
+    be forced to equal "river" attending to "bank". Those are not the same need:
+    "bank" is ambiguous and depends heavily on "river", while "river" is already
+    clear and gains little from "bank".
 
+One vector cannot hold two jobs.
+    The vector used to decide relevance would also be the vector copied into the
+    blend. But the features that make a word a good MATCH are not the features
+    worth CONTRIBUTING. "river" is relevant to "bank" because it is a body of
+    water; what it contributes is the water sense of the sentence. Tying the two
+    together means improving one damages the other.
 
----
+Nothing is learnable.
+    Fixed embeddings give a fixed similarity. The model has no way to learn what
+    "relevant" should mean for the task it is being trained on.
 
-### Act 2: The Raw Scorecard Grid ($Q \times K^T$)
 
-To find out how much every word matches with every other word, we multiply $Q$ by the transpose of $K$ ($K^T$). This yields our raw $(n \times n)$ compatibility matrix.
+3.1 Three Roles, Three Vectors
+------------------------------
 
-$$K^T = \begin{pmatrix} 0 & 1 & 1 \\ 1 & 0 & 1 \end{pmatrix}$$
+The fix is to derive three different vectors from each word's embedding, one per
+role:
 
-$$\text{Raw Scores} = QK^T = \begin{pmatrix} 1 & 0 \\ 0 & 1 \\ 1 & 1 \end{pmatrix} \begin{pmatrix} 0 & 1 & 1 \\ 1 & 0 & 1 \end{pmatrix} = \begin{pmatrix} 0 & 1 & 1 \\ 1 & 0 & 1 \\ 1 & 1 & 2 \end{pmatrix}$$
+    Query (Q)   what this word is looking for
+                "bank" asks: am I financial or geographic? what would settle it?
 
-> **How to read this matrix:**
-> * Row 1 belongs to **"money"**. Its raw alignment scores are `0` with itself, `1` with "bank", and `1` with "grows".
-> * Row 2 belongs to **"bank"**. It scores `1` with "money", `0` with itself, and `1` with "grows".
-> 
-> 
+    Key (K)     what this word advertises to others
+                "river" offers: I am about water and nature.
+                "money" offers: I am about finance.
 
----
+    Value (V)   what this word contributes if it is chosen
+                the actual meaning that gets mixed into the blend
 
-### Act 3: Scaling and Softmax
+A word plays all three roles at once: it asks with its Query, is matched against
+with its Key, and gives with its Value. The names come from database lookup -
+you present a query, it is matched against keys, and you get back the value.
 
-Our Key/Query dimension is $d_k = 2$, so our scaling factor is $\sqrt{d_k} = \sqrt{2} \approx 1.41$.
+Matching Q against K produces w_ij; V is what those weights are then applied to.
 
-To keep the math perfectly readable for your notes without decimals, let's look at **Row 2 ("bank")** to see how Softmax works.
-The raw scores for "bank" are $[1, 0, 1]$. Let's skip the division trick for a brief second just to see the pure Softmax distribution mechanism:
 
-$$\text{Softmax}(\text{Row 2}) = \left[ \frac{e^1}{e^1 + e^0 + e^1}, \frac{e^0}{e^1 + e^0 + e^1}, \frac{e^1}{e^1 + e^0 + e^1} \right]$$
+3.2 How They Are Produced
+-------------------------
 
+Each role is a learned linear projection of the embedding:
 
-Knowing $e^1 \approx 2.71$ and $e^0 = 1$:
+    Q = X W_Q
+    K = X W_K
+    V = X W_V
 
+With sequence length n and embedding size d_model:
 
-$$\text{Softmax}(\text{Row 2}) \approx \left[ \frac{2.71}{6.42}, \frac{1}{6.42}, \frac{2.71}{6.42} \right] \approx \mathbf{[0.42, 0.16, 0.42]}$$
+    X               (n x d_model)     the input embeddings, one row per word
+    W_Q, W_K        (d_model x d_k)
+    W_V             (d_model x d_v)
+    Q, K            (n x d_k)
+    V               (n x d_v)
 
-If we do this for all rows, we get our final, clean **Attention Weights Matrix ($A$)**:
+Two points about these matrices:
 
-$$A = \begin{pmatrix} 0.16 & 0.42 & 0.42 \\ 0.42 & 0.16 & 0.42 \\ 0.30 & 0.30 & 0.40 \end{pmatrix}$$
+- They are learned along with the rest of the model. What counts as "relevant"
+  is not hand-designed; it is trained.
+- There is one W_Q, one W_K, one W_V for the whole layer, shared by every
+  position. Parameter count does not grow with sentence length, and the same
+  notion of relevance applies everywhere in the sentence.
 
----
+d_q must equal d_k, since Q and K are compared with a dot product and the two
+vectors must have matching length. d_v is free - V is never compared to anything,
+only summed - though in practice d_v = d_k. Section 5 returns to this.
 
-### Act 4: The Final Output ($A \times V$)
+This also settles the loose end from section 1: V_j is the row of V for word j,
+that is, word j's static embedding passed through W_V. Not the embedding itself.
 
-Now, we take our probability matrix $A$ $(3 \times 3)$ and multiply it by our actual semantic data, the Value matrix $V$ $(3 \times 2)$.
+The weights w_ij still have to be computed from Q and K. That is section 4.
 
-$$\text{Output } (Y) = A \times V = \begin{pmatrix} 0.16 & 0.42 & 0.42 \\ 0.42 & 0.16 & 0.42 \\ 0.30 & 0.30 & 0.40 \end{pmatrix} \begin{pmatrix} 2 & 0 \\ 0 & 2 \\ 2 & 2 \end{pmatrix}$$
+================================================================================
 
-Let’s calculate the new vector for **"bank" (Row 2)**:
+4. How Attention Scores Are Calculated (Q, K -> Weights -> V)
+--------------------------------------------------------------------------------
 
-* $\text{New Vector Component 1} = (0.42 \times 2) + (0.16 \times 0) + (0.42 \times 2) = 0.84 + 0 + 0.84 = \mathbf{1.68}$
-* $\text{New Vector Component 2} = (0.42 \times 0) + (0.16 \times 2) + (0.42 \times 2) = 0 + 0.32 + 0.84 = \mathbf{1.16}$
+Section 3 produced Q, K and V. What remains is the weight w_ij from section 1,
+in four steps:
 
-$$Y = \begin{pmatrix} 1.16 & 1.68 \\ 1.68 & 1.16 \\ 1.40 & 1.40 \end{pmatrix} \begin{array}{l} \text{-- New "money" Vector} \\ \text{-- New "bank" Vector} \\ \text{-- New "grows" Vector} \end{array}$$
+    score  ->  scale  ->  normalize  ->  blend
 
----
+Worked through on "river bank flows", focusing on the word "bank".
 
-## 3. The Big Takeaway for Your Notes
 
-Look at what just happened to the word **"bank"**:
+4.1 Step 1 - Score Every Pair
+-----------------------------
 
-* Its original static vector was $[0, 1]$.
-* Its new context-aware vector is $[1.68, 1.16]$.
+The comparison between a Query and a Key is a dot product:
 
-Because "bank" had high attention weights pointing toward "money" ($0.42$) and "grows" ($0.42$), its new representation absorbed $42\%$ of the information from the vector of "money" and $42\%$ from "grows".
+    s_ij = q_i . k_j
 
-This mathematical blend is exactly how the Transformer changes the literal vector representation of the word "bank" to mean a financial institution rather than the side of a river!
+A dot product is large and positive when two vectors point the same way, near
+zero when they are unrelated, and negative when they point in opposite
+directions. That is exactly the ordering we want from a relevance score, and it
+costs one multiply-add per dimension.
+
+Doing this for every pair at once is a single matrix multiplication:
+
+    S = Q K^T          (n x d_k) times (d_k x n)  ->  (n x n)
+
+Row i of S holds word i's scores against every word in the sentence, including
+itself - a word is usually its own strongest match, and should be.
+
+Note: 
+-------------------
+S is not symmetric. Entry (i,j) uses q_i and k_j, entry (j,i) uses q_j and k_i,
+and Q and K come from different projections. This is the asymmetry that section 3
+required: "bank" can depend heavily on "river" while "river" barely depends on
+"bank".
+
+For "bank" in "river bank flows", suppose the row comes out as:
+
+    s(bank, river) = 24.0
+    s(bank, bank)  = 34.9
+    s(bank, flows) =  5.5
+
+
+4.2 Step 2 - Scale by sqrt(d_k)
+-------------------------------
+
+Before anything else is done with S, it is divided by sqrt(d_k):
+
+    S_scaled = S / sqrt(d_k)
+
+With d_k = 64 the divisor is 8, so the row above becomes:
+
+    3.00,  4.36,  0.69
+
+Section 5 explains why this division is necessary. For now, take it as part of
+the pipeline.
+
+
+4.3 Step 3 - Normalize With Softmax
+-----------------------------------
+
+Scores are unbounded and can be negative, so they cannot be used as weights
+directly. Section 1 required weights that are positive and sum to 1.
+
+The obvious fix, dividing each score by the row's sum, does not work: with mixed
+signs the sum can be near zero or negative, which makes the weights explode or
+come out negative. Negative attention has no meaning here - a word cannot
+contribute a negative amount of itself.
+
+Softmax exponentiates first, which forces every value positive while preserving
+their order, then normalizes:
+
+    softmax(s)_j = exp(s_j) / sum over k of exp(s_k)
+
+It is applied ROW-WISE. Each row of S becomes a set of weights summing to 1;
+the matrix as a whole does not sum to 1.
+
+    A = softmax_rows( S_scaled )      (n x n)
+
+For the "bank" row:
+
+    exp(3.00) = 20.1     ->  w(bank, river) = 0.20
+    exp(4.36) = 78.3     ->  w(bank, bank)  = 0.78
+    exp(0.69) =  2.0     ->  w(bank, flows) = 0.02
+    sum       = 100.4
+
+These are the weights section 1 assumed. They are now derived rather than given.
+
+Note that exponentiating widens gaps: a score 1.36 higher than another becomes a
+weight about 4 times larger. Softmax does not just normalize, it sharpens. How
+sharp depends on the size of the scores, which is what section 5 is about.
+
+
+4.4 Step 4 - Blend the Values
+-----------------------------
+
+The weights now multiply the Value vectors, which is the update rule from
+section 1:
+
+    y_i = sum over j of ( w_ij * v_j )
+
+    y_bank = 0.20 * V_river + 0.78 * V_bank + 0.02 * V_flows
+
+In matrix form the whole sentence is done at once:
+
+    Y = A V            (n x n) times (n x d_v)  ->  (n x d_v)
+
+Row i of Y is word i's contextual embedding, and it replaces the static
+embedding that entered the layer.
+
+Putting the four steps together:
+
+    Attention(Q, K, V) = softmax( Q K^T / sqrt(d_k) ) V
+
+Shapes end to end:
+
+    X                (n x d_model)
+    Q, K             (n x d_k)
+    V                (n x d_v)
+    S = Q K^T        (n x n)
+    A = softmax(.)   (n x n)
+    Y = A V          (n x d_v)
+
+The weighted sum is what makes this trainable: it is smooth and differentiable,
+so gradients flow back through the weights into W_Q, W_K and W_V, and the model
+learns what "relevant" should mean.
+
+================================================================================
+
+5. Why We Divide by sqrt(d_k) (Scaled Dot-Product Attention)
+--------------------------------------------------------------------------------
+
+Step 2 of section 4 divided every score by sqrt(d_k) without saying why. The
+reason is that the size of a dot product depends on how many dimensions it sums
+over, and softmax reacts badly to large numbers.
+
+
+5.1 Where Large Scores Come From
+--------------------------------
+
+A score is a dot product over d_k dimensions:
+
+    s_ij = q_i . k_j = q_1*k_1 + q_2*k_2 + ... + q_dk*k_dk
+
+That is a sum of d_k terms. If the components are roughly independent with mean 0
+and variance 1, the variance of the sum is d_k, so its typical size is:
+
+    standard deviation = sqrt(d_k)
+
+    d_k = 64   ->  scores spread by about 8
+    d_k = 512  ->  scores spread by about 23
+
+Nothing about meaning changed here. Widening the head from 64 to 512 dimensions
+multiplies every score by roughly 3 purely because more terms are being added.
+The scale of the scores is an accident of dimension.
+
+
+5.2 Why Large Scores Break Softmax
+----------------------------------
+
+Section 4.3 noted that softmax sharpens: it exponentiates, so gaps between
+scores turn into ratios between weights. When scores spread by sqrt(d_k), the
+gaps do too, and exponentiating a large gap destroys the mixture.
+
+Take the raw scores from section 4 and skip the scaling:
+
+    unscaled   24.0,  34.9,  5.5   ->  w = 0.00002,  0.99998,  0.00000
+    scaled      3.00,  4.36, 0.69  ->  w = 0.20,     0.78,     0.02
+
+Unscaled, "bank" attends only to itself. Its output becomes a copy of its own
+Value vector, which is just its static embedding passed through W_V. Self-
+attention collapses into the fixed dictionary vector of section 1 - the exact
+problem it was built to solve.
+
+Training is hurt worse than inference. The gradient of softmax approaches zero
+when its outputs approach 0 or 1, so a saturated row passes almost no signal
+back to W_Q and W_K. The model cannot learn what "relevant" means, because the
+weights that decide relevance stop receiving gradient.
+
+Note how this failure scales: the bigger the model, the larger d_k, the sharper
+the saturation. Without a fix, the architecture would get worse as it grew.
+
+
+5.3 The Fix, and Why It Is sqrt(d_k)
+------------------------------------
+
+Divide the scores by sqrt(d_k) before softmax:
+
+    variance(s / sqrt(d_k)) = variance(s) / d_k = d_k / d_k = 1
+
+    d_k = 64   ->  divide by 8     ->  spread back to about 1
+    d_k = 512  ->  divide by 23    ->  spread back to about 1
+
+Softmax now sees inputs on the same scale no matter how wide the head is. How
+sharp the attention becomes is decided by real differences in relevance, not by
+the dimension count.
+
+Why not divide by d_k instead? That over-corrects. The spread would become
+1/sqrt(d_k), shrinking toward zero as models grow, and softmax fed near-identical
+inputs returns near-uniform weights - every word attended to equally, which is no
+attention at all. Too large a divisor is as damaging as none. Only sqrt(d_k)
+leaves the variance at 1.
+
+Why d_k and not d_v? Only Q and K enter the dot product, and d_k is the number of
+terms in that sum. V is never compared to anything, so d_v is irrelevant here.
+And d_q needs no separate mention: section 3.2 already established that d_q = d_k
+is forced, since the dot product requires both vectors to have the same length.
+
+This single division is why the mechanism is called Scaled Dot-Product Attention:
+
+    Attention(Q, K, V) = softmax( Q K^T / sqrt(d_k) ) V
+
+================================================================================
+6. Worked Example, End to End
+--------------------------------------------------------------------------------
+
+Sections 3 to 5 built the mechanism in symbols. Here it runs on real numbers,
+small enough to check by hand.
+
+The word under test is "apple", which is either a fruit or a company. We will
+run it through two sentences and watch the same input row come out as two
+different vectors.
+
+
+6.1 Setup
+---------
+
+Sentence:   apple launched phones      n = 3, d_model = 2, d_k = d_v = 2
+
+To make the result readable, give the two dimensions a meaning:
+
+    dimension 1 = how food-like the word is
+    dimension 2 = how tech-like the word is
+
+Real models do not have interpretable dimensions like this - meaning is spread
+across all d_model of them. This is a reading aid, not a claim about how
+embeddings work.
+
+The static embeddings, straight from the lookup table:
+
+              food  tech
+    apple    [  1     1  ]     ambiguous: equally food and tech
+    launched [  0     1  ]
+    phones   [  0     2  ]
+
+    X = [ 1  1 ]
+        [ 0  1 ]
+        [ 0  2 ]
+
+The three projection matrices. In a trained model these are learned; here they
+are picked to keep the arithmetic small.
+
+    W_Q = [ 1  0 ]      W_K = [ 1  0 ]      W_V = [ 1  0 ]
+          [ 0  1 ]            [ 2  1 ]            [ 0  2 ]
+
+
+6.2 Step 1 - Project into Q, K, V
+---------------------------------
+
+    Q = X W_Q = [ 1  1 ]        K = X W_K = [ 3  1 ]        V = X W_V = [ 1  2 ]
+                [ 0  1 ]                    [ 2  1 ]                    [ 0  2 ]
+                [ 0  2 ]                    [ 4  2 ]                    [ 0  4 ]
+
+Same three words, three different views. W_Q happens to be the identity here, so
+Q equals X; K and V are genuinely different from the embeddings and from each
+other, which is the point of section 3.
+
+
+6.3 Step 2 - Score Every Pair
+-----------------------------
+
+    S = Q K^T
+
+              apple  launched  phones
+    apple   [   4        3        6   ]
+    launched[   1        1        2   ]
+    phones  [   2        2        4   ]
+
+Read the top row: "apple" scores 4 against itself, 3 against "launched", 6
+against "phones".
+
+Note S is not symmetric. S[apple][launched] = 3 but S[launched][apple] = 1.
+"apple" finds "launched" three times more worth attending to than "launched"
+finds "apple". A plain dot product of embeddings could never produce that, which
+is exactly the argument section 3 made for splitting Q from K.
+
+
+6.4 Step 3 - Scale
+------------------
+
+Divide by sqrt(d_k) = sqrt(2) = 1.414:
+
+    apple row:  4 / 1.414 = 2.83     3 / 1.414 = 2.12     6 / 1.414 = 4.24
+
+
+6.5 Step 4 - Softmax the Row
+----------------------------
+
+    exp(2.83) = 16.91      ->  16.91 / 94.92 = 0.18   apple
+    exp(2.12) =  8.34      ->   8.34 / 94.92 = 0.09   launched
+    exp(4.24) = 69.66      ->  69.66 / 94.92 = 0.73   phones
+    sum       = 94.92                          ----
+                                               1.00
+
+Doing the same for the other two rows gives the full attention matrix:
+
+              apple  launched  phones
+    apple   [  0.18    0.09     0.73  ]
+    launched[  0.25    0.25     0.50  ]
+    phones  [  0.16    0.16     0.67  ]
+
+Every row sums to 1. The matrix as a whole does not.
+
+
+6.6 Step 5 - Blend the Values
+-----------------------------
+
+    y_apple = 0.18 * V_apple + 0.09 * V_launched + 0.73 * V_phones
+            = 0.18 * [1, 2]  + 0.09 * [0, 2]     + 0.73 * [0, 4]
+            = [0.18, 0.36]   + [0, 0.18]         + [0, 2.92]
+            = [0.18, 3.47]
+
+All three rows at once, Y = A V:
+
+              food   tech
+    apple   [ 0.18   3.47 ]
+    launched[ 0.25   3.01 ]
+    phones  [ 0.16   3.35 ]
+
+
+6.7 Reading the Result
+----------------------
+
+Follow "apple" through the layer:
+
+    went in as   [ 1.00, 1.00 ]     food = tech, completely ambiguous
+    came out as  [ 0.18, 3.47 ]     tech is 19x food
+
+Nothing told the model that this "apple" is a company. It gave 0.73 of its
+attention to "phones", and "phones" contributes a strongly tech Value, so the
+tech dimension dominates the blend while the food dimension shrinks to almost
+nothing.
+
+
+6.8 The Same Word in a Different Sentence
+-----------------------------------------
+
+Now run "apple tastes sweet" through the identical layer - same W_Q, W_K, W_V,
+same lookup table. Only the neighbours change:
+
+    apple  [ 1  1 ]     the identical row as before
+    tastes [ 2  0 ]
+    sweet  [ 3  0 ]
+
+The apple row of the score matrix comes out as 4, 2, 3, which scales to
+2.83, 1.41, 2.12 and softmaxes to:
+
+    0.58 apple     0.14 tastes     0.28 sweet
+
+    y_apple = 0.58 * [1, 2] + 0.14 * [2, 0] + 0.28 * [3, 0]
+            = [1.71, 1.15]
+
+Side by side:
+
+    static "apple"              [ 1.00, 1.00 ]    one row in the table
+
+    in "apple launched phones"  [ 0.18, 3.47 ]    tech
+    in "apple tastes sweet"     [ 1.71, 1.15 ]    food
+
+One embedding row, one set of weights, two sentences, two different meanings.
+This is the claim section 1 made with invented numbers, now produced by the
+mechanism itself.
+
+================================================================================
+
+7. Masking: Blocking Pairs
+--------------------------------------------------------------------------------
+
+So far every word attends to every word. Two situations require some pairs to be
+switched off.
+
+
+7.1 Why Pairs Must Be Blocked
+-----------------------------
+
+Padding. GPUs process sentences in batches, and a batch has to be one rectangular
+tensor, so every sentence in it must have the same length. Short sentences are
+filled out with a placeholder token, <PAD>:
+
+    "apple launched phones"   ->  apple  launched  phones
+    "apple fell"              ->  apple  fell      <PAD>
+
+<PAD> carries no meaning. Left unblocked, it still gets a Key, still receives a
+score, and still contributes its Value to the blend. Real words would be mixed
+with a token that exists purely to square off a tensor.
+
+Future words. When the model generates text one token at a time, position t must
+not see positions after t, or it would be predicting a word it has already been
+shown. That mask is the subject of masked_multihead_attention.txt; the mechanism
+below is the same one it uses.
+
+
+7.2 How Blocking Works
+----------------------
+
+Add a mask matrix M to the scaled scores, before softmax:
+
+    M[i][j] =    0     word i may attend to word j
+    M[i][j] = -inf     blocked
+
+    A = softmax( Q K^T / sqrt(d_k)  +  M )
+
+Since exp(-inf) = 0, a blocked pair gets a weight of exactly zero, and it drops
+out of the sum in the denominator as well - so the surviving weights still add up
+to 1.
+
+Why not simply zero the weights after softmax? Because then the row no longer
+sums to 1. Zeroing 0.30 of a row leaves the remaining weights summing to 0.70,
+and the output is no longer a weighted average - it is shrunk toward zero by
+however much was masked, and by a different amount in every row. Section 1
+required the weights to be a proper average. Adding -inf beforehand gets the
+renormalization for free.
+
+In code the value used is a large negative number such as -1e9 rather than true
+negative infinity, because 0 * inf produces NaN in some operations.
+
+
+7.3 The Padding Mask
+--------------------
+
+For "apple fell <PAD>", position 3 is padding, so column 3 is blocked for every
+row:
+
+              apple  fell  <PAD>
+    apple   [   0     0    -inf ]
+    fell    [   0     0    -inf ]
+    <PAD>   [   0     0    -inf ]
+
+Columns, not rows: the rule is that nothing may attend TO padding. The <PAD> row
+still computes an output, which is harmless because it is discarded before the
+loss is calculated.
+
+The padding mask depends only on which positions are padding, so it is one
+pattern per sentence, broadcast across all rows. It applies wherever real
+sentences are batched, encoder self-attention included - it is not a
+decoder-only concern.
+
+================================================================================
+
+8. What It Costs: Time and Space
+--------------------------------------------------------------------------------
+
+Section 2.6 promised an accounting of what "connect every word to every word"
+costs. Rule of thumb: multiplying (A x B) by (B x C) takes about A * B * C
+operations.
+
+
+8.1 Time
+--------
+
+Three multiplications dominate, using d for d_model and taking d_k = d_v = d:
+
+    Projections     X (n x d) times W (d x d), three times      O(n d^2)
+    Scores          Q (n x d) times K^T (d x n)                 O(n^2 d)
+    Blend           A (n x n) times V (n x d)                   O(n^2 d)
+
+    total: O(n d^2 + n^2 d)
+
+Which term dominates depends on whether the sentence is longer than the model is
+wide. Once n > d, the n^2 terms win, and the layer is O(n^2 d).
+
+The n^2 is quadratic, so doubling the sequence length quadruples the work. Ten
+times the text is a hundred times the cost.
+
+
+8.2 Space, Which Is the Harder Limit
+------------------------------------
+
+Softmax needs a whole row of scores at once to compute its denominator, so the
+n x n matrix has to actually exist in memory - one per head, per layer. Training
+must keep it for the backward pass as well.
+
+At n = 100,000 tokens, in 32-bit floats:
+
+    100,000 x 100,000 x 4 bytes = 40 GB
+
+for a single attention matrix in a single layer. Time complexity makes long
+sequences slow; space complexity makes them impossible. The failure mode is not
+a long wait, it is an out-of-memory crash before the first step finishes.
+
+This is why the practical fixes target memory first. FlashAttention computes the
+same result without ever materializing the full matrix, by processing it in tiles
+and recomputing what it needs during the backward pass. Sparse and linear
+attention change the math so that fewer than n^2 pairs are scored. Architectures
+like Mamba drop attention altogether.
+
+
+8.3 Compared With Recurrence
+----------------------------
+
+Section 2 argued the trade-off; these are the numbers behind it.
+
+                          RNN            Self-attention
+    total operations      O(n d^2)       O(n^2 d)
+    sequential steps      O(n)           O(1)
+    path between words    O(n)           O(1)
+    memory                O(n d)         O(n^2)
+
+Self-attention does more arithmetic and uses far more memory, and buys two
+things with it: every word computed at once, and every pair one step apart.
+
+The balance has shifted since 2017. Then, n was around 512 and d around 512 to
+1024, so O(n d^2) was the larger term and the quadratic cost was not the
+constraint. Now sequences run to hundreds of thousands of tokens while d has
+grown slowly, so n^2 d dominates everything.
+
+================================================================================
+
+9. Where This Goes Next
+--------------------------------------------------------------------------------
+
+What has been built is one attention pattern over one sequence. Three limits
+remain, each handled by another note.
+
+It has no idea of order. Permute the rows of X and the rows of the output are
+permuted the same way, with identical values - the mechanism is permutation
+equivariant. "Moaz killed Lion" and "Lion killed Moaz" produce the same set of
+vectors, just reordered, because nothing in Q K^T or the blend refers to
+position. Section 2.6 flagged this as the price of dropping recurrence.
+    -> positional_encoding.txt
+
+One set of W_Q, W_K, W_V produces one notion of relevance per layer, so a single
+layer cannot track grammatical agreement and topical similarity at the same time.
+Running several attentions in parallel over slices of d_model fixes it.
+    -> multihead_attention.txt
+
+Q, K and V all come from the same sequence, which is what "self" means. Taking Q
+from one sequence and K, V from another is what connects an encoder to a decoder.
+    -> cross_attention.txt
+
+The causal mask that section 7 deferred.
+    -> masked_multihead_attention.txt
+
+================================================================================
+
+10. Practice Questions
+--------------------------------------------------------------------------------
+
+Q1: Given sequence length n, model width d_model, and per-head sizes d_k and
+    d_v, what are the shapes of X, Q, K, V, S, A and Y?
+A:  X (n x d_model), Q and K (n x d_k), V (n x d_v), S and A (n x n),
+    Y (n x d_v). W_Q and W_K are (d_model x d_k), W_V is (d_model x d_v).
+
+Q2: Why must d_q equal d_k, while d_v is free to differ?
+A:  Q and K meet in a dot product, which requires both vectors to have the same
+    length. V never enters that product - it is only summed with weights that
+    have already been computed - so its width only has to match whatever comes
+    after the layer.
+
+Q3: Why not skip W_Q and W_K and score words by the dot product of their
+    embeddings directly?
+A:  E_i . E_j is symmetric, so word i's attention to word j would be forced to
+    equal j's attention to i. Relevance is not mutual: an ambiguous word depends
+    heavily on the word that disambiguates it, not the reverse. Separate
+    projections make S asymmetric. A single vector would also have to serve as
+    both the thing matched and the thing contributed, and nothing would be
+    learnable.
+
+Q4: What happens to training if the division by sqrt(d_k) is removed?
+A:  Scores are a sum of d_k terms, so their spread grows like sqrt(d_k).
+    Softmax turns that spread into near one-hot weights, one word takes almost
+    all the attention, and the output collapses to a copy of a single Value
+    vector. Softmax's gradient is near zero when its outputs are near 0 or 1, so
+    W_Q and W_K stop receiving useful gradient and the model cannot learn what
+    relevance means.
+
+Q5: Why sqrt(d_k) and not d_k?
+A:  Dividing by d_k over-corrects: the spread becomes 1/sqrt(d_k), which shrinks
+    as models grow, and softmax over near-identical inputs returns near-uniform
+    weights - every word attended to equally, which is no attention at all. Only
+    sqrt(d_k) leaves the variance at 1.
+
+Q6: Swap words 2 and 5 in the input. What happens to the output?
+A:  Rows 2 and 5 of the output swap, and every value is unchanged. Self-attention
+    is permutation equivariant, not invariant: the outputs move with the inputs
+    rather than staying fixed. Nothing in the mechanism refers to position, which
+    is why positional information has to be added to the embeddings beforehand.
+
+Q7: Why is a mask added as -inf before softmax rather than by zeroing the
+    weights afterwards?
+A:  Adding -inf removes the blocked term from the softmax denominator too, so the
+    surviving weights still sum to 1. Zeroing afterwards leaves the row summing
+    to less than 1, which shrinks the output toward zero by an amount that
+    differs from row to row, and it is no longer a weighted average.
+
+Q8: Self-attention is O(n^2 d) in time and O(n^2) in space. Which limit is hit
+    first in practice, and why?
+A:  Space. The n x n matrix must be materialized for softmax and retained for the
+    backward pass - at n = 100,000 in fp32 that is 40 GB for one matrix in one
+    layer. Excess time cost produces a slow run; excess memory produces an
+    out-of-memory crash. This is why FlashAttention targets materialization
+    rather than arithmetic.
