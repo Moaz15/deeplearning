@@ -6,7 +6,7 @@ Queries (Q) come from the decoder
 Keys (K) and Values (V) come from the encoder
 
 Purpose:
-While generating each output token, the decoder selectively focuses on relevant parts of the input sequence.
+While generating each output token, the decoder selectively focuses on relevant parts of the input sequenc e.
 
 Cross-attention is essential for sequence-to-sequence tasks such as:
 

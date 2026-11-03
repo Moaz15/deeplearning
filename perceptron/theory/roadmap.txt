@@ -1,0 +1,92 @@
+PERCEPTRON - ROADMAP
+================================================================================
+1. Foundations 
+------------------------------------------
+1.1  What a perceptron is: one neuron, a linear classifier, two classes.
+1.2  The model: z = w^T x + b. Weights weigh each feature, the bias shifts.
+1.3  Why the sum is linear, and why that forces a straight boundary.
+1.4  Step / sign activation turns the score z into a class label.
+1.5  The boundary is z = 0: a line in 2D, a plane in 3D, a hyperplane in n-D.
+1.6  Training: predict, take the error y - y_hat, update w and b on a mistake.
+1.7  Convergence theorem: separable data is solved in a finite number of steps.
+1.8  Perceptron loss max(0, -y z), and why it is not differentiable.
+1.9  Perceptron vs logistic regression: hard label against probability.
+1.10 The four limits: linear only (XOR), no probability, no margin, and a step
+     that blocks backprop.
+
+
+2.learning rule and convergence
+------------------------------------------
+2.1  The update rule is SGD on the perceptron loss. One thing, two names.
+2.2  Geometry: w is the normal of the boundary, b slides it.
+2.3  The learning rate changes nothing from w = 0. It only scales w, and
+     sign(z) ignores scale.
+2.4  Mistakes <= (R / gamma)^2. A thin margin means slow, even when separable.
+2.5  Scale the features first, or the column with the biggest numbers owns
+     every update.
+2.6  Not separable: the loop never stops, and the final weights are just the
+     last mistake, not the best ones seen.
+2.7  Fixes: cap the epochs, pocket (keep the best so far), averaged (mean of
+     all weight vectors - a few lines, and the one worth using).
+2.8  Shuffle every epoch. Example order picks the boundary, so two runs differ
+     and neither is wrong.
+2.9  Online learning: one example at a time, no dataset in memory, new data
+     continues training instead of restarting it.
+2.10 Zero init is fine here. In an MLP it kills the layer - every unit stays
+     identical, nothing breaks the symmetry.
+
+
+3. XOR and the need for layers
+----------------------------------------
+3.1  Draw XOR. The classes sit on opposite diagonals, so no line splits them.
+3.2  Fix 1: add the feature x1 * x2. The same perceptron separates it.
+     Separability belongs to the features, not to the data.
+3.3  Fix 2: two layers. XOR = OR AND NOT(AND). Give real weights and walk all
+     four inputs through them.
+3.4  Two linear layers collapse: W2(W1 x) = (W2 W1) x. Any depth without an
+     activation is still one straight line.
+3.5  Step has zero slope everywhere, so backprop sends nothing back. That is
+     why sigmoid and ReLU replaced it.
+3.6  Perceptron + smooth activation + more than one layer = neural network.
+
+
+4. the linear classifier family
+-----------------------------------------
+4.1  One model, three losses:
+       perceptron   max(0, -y z)        stops caring at the boundary
+       hinge (SVM)  max(0, 1 - y z)     wants a margin
+       logistic     log(1 + e^(-y z))   wants confidence, so it needs
+                                        regularization on separable data
+4.2  sklearn SGDClassifier is this switch - "perceptron", "hinge", "log_loss"
+     over the same loop.
+4.3  The perceptron takes any separator, the SVM takes the widest one. That
+     gap is the margin, and it is what generalizes.
+4.4  Multiclass: one weight row per class, predict argmax, on a mistake push
+     the true row up and the predicted row down.
+4.5  Hard labels cost you the threshold, ROC-AUC, and the precision / recall
+     trade. Accuracy lies on imbalanced data. At best use z as a raw score.
+4.6  In production you ship logistic regression or a linear SVM. The
+     perceptron is the atom they are built from.
+4.7  Today: step -> sigmoid is logistic regression, a row of units is
+     nn.Linear, and the last layer of any classifier is still w^T x + b.
+
+
+5. Interview checklist
+----------------------
+Answer each cold. One you cannot answer points at an unfinished note.
+
+     1. Why can a perceptron not learn XOR, and what fixes it?         [03]
+     2. What breaks if you remove the activations from a deep net?     [03]
+     3. Is the update rule gradient descent? On what loss?             [02]
+     4. Why is the step function useless in a deep network?            [03]
+     5. How do you tune a classic perceptron's learning rate?          [02]
+     6. Data is not separable - what happens, what do you ship?        [02]
+     7. Perceptron vs SVM vs logistic regression - what really
+        differs?                                                       [04]
+     8. Why scale features before a linear model?                      [02]
+     9. Does it find the best boundary, or just a boundary?            [04]
+    10. Why can a perceptron start at zeros when an MLP cannot?        [02]
+    11. Write the decision boundary. What is it in 2D, in n-D?     [01]
+    12. The output is a hard label - what breaks downstream?           [04]
+    13. Extend it to 10 classes - what changes?                        [04]
+    14. Where is the perceptron inside a modern network?               [04]

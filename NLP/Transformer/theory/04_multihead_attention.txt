@@ -1,400 +1,231 @@
-MULTI-HEAD ATTENTION 
-===========================================
+MULTI-HEAD ATTENTION
+================================================================================
 
-1. Why Multi-Head Attention (MHA) Is Needed
--------------------------------------------
+Note 02 built one attention mechanism. This note runs several of them side by
+side and explains why that is almost free.
 
-Self-Attention gives each word a contextual meaning by looking at all other words.
-But using ONLY ONE attention head has a major limitation:
+Notation follows note 02: n is sequence length, d_model the model width, and a
+single attention produces Y = softmax(Q K^T / sqrt(d_k)) V.
 
-    → A single head can focus on only one type of relationship at a time.
 
-Example:
-Sentence: "the man saw a kid with a telescope"
+1. The Limit of One Head
+--------------------------------------------------------------------------------
 
-Possible interpretations:
-1) The man used the telescope.  
-2) The kid had the telescope.
+An attention layer produces one score matrix, and softmax turns each of its rows
+into one probability distribution. A distribution has to commit: the weight it
+gives to one word is weight it cannot give to another.
 
-A single attention head cannot capture BOTH interpretations simultaneously.
+That is a problem, because a word often relates to different words for different
+reasons at the same time.
 
-In natural language:
-- Words relate in many ways (syntax, semantics, coreference, objects, modifiers)
-- A single attention pattern is too restrictive
+    "the man saw a kid with a telescope"
 
-Multi-Head Attention solves this by allowing the model to look at the sentence from multiple perspectives.
----------------------------------------------------------------------------------------------------------
-2. What Multi-Head Attention Does
+Two readings:
 
-Instead of computing ONE Self-Attention output (one perspective),
-the Transformer computes **multiple attention operations in parallel**.
+    A. the telescope belongs with "saw"  - the man used it to look
+    B. the telescope belongs with "kid"  - the kid was carrying it
 
-Each one is called a HEAD.
+Both are grammatically available, and only later context settles which is meant.
+With one head, the row for "telescope" is a single distribution, so it must put
+its mass mostly on "saw" or mostly on "kid". One reading is chosen and the other
+is destroyed before any later layer can weigh them.
 
-Example: 8 heads in the original Transformer  
-(each head learns a different “view” of the sentence)
+The same conflict appears without ambiguity. To interpret a verb you may need its
+subject (grammar), its object (meaning), and what a nearby pronoun refers to
+(coreference). One distribution cannot rank all three sets of words at once,
+because emphasizing one demotes the others.
 
-For each head h:
-- It has its OWN learned projection matrices:
-      W_Qʰ, W_Kʰ, W_Vʰ
-- It computes its own:
-      Qʰ, Kʰ, Vʰ → Attention → Zʰ (head output)
+One head is not too small. It is too singular.
 
-So each head focuses on a different aspect:
-- Head 1: subject ↔ verb relation
-- Head 2: noun ↔ adjective
-- Head 3: long-range dependency
-- Head 4: coreference (“he”, “the man”)
-- …
-Different heads discover different linguistic patterns automatically.
 
-3. How Multi-Head Attention Works (High-Level)
-------------------------------------------------------
-Step 1 — Split embedding dimension  
-----------------------------------------------
-Given embedding size = 512  
-and number of heads = 8:
+2. h Attentions in Parallel
+--------------------------------------------------------------------------------
 
-Each head gets:
-    d_head = 512 / 8 = 64 dimensions
+Run h separate attentions over the same input. Each is a head, with its own
+W_Q, W_K, W_V, and each produces its own score matrix and its own output.
 
-This allows heads to be cheaper and specialized.
-
-Step 2 — Linear projections per head  
-----------------------------------------------------------------------------
-For each head h:
-
-    Qʰ = X × W_Qʰ
-    Kʰ = X × W_Kʰ
-    Vʰ = X × W_Vʰ
-
-Each W matrix is 512×64  
-Each head learns DIFFERENT W_Q, W_K, W_V  
-→ Different views of the same input.
-
-Step 3 — Self-Attention inside each head  
-----------------------------------------------------------------------
-Each head computes:
-
-    Zʰ = Attention(Qʰ, Kʰ, Vʰ)
-
-This produces a 2×64 vector per head (for 2 tokens).
-
-Step 4 — Concatenate all head outputs  
--------------------------------------
-[Z¹, Z², Z³, ... Z⁸]  
-→ Combined to form a 2×512 matrix.
-
-Step 5 — Final linear projection  
----------------------------------
-The concatenated output passes through:
-    Wᴼ   (a 512×512 matrix)
-
-Giving the final output:
-    Z_final = Concat(Z¹…Z⁸) × Wᴼ   → shape (2×512)
-
-This puts information from all heads back into the model’s dimension.
-
--------------------------------------------
-4. Why Do We Need Multiple Heads?
--------------------------------------------
-
-Reason 1 — Different Perspectives  
-    Each head focuses on a different relationship.
-    Language has MANY relationships; one head cannot capture all.
-
-Reason 2 — Ambiguity Resolution  
-    “the man saw a kid with a telescope”
-    - One head interprets “man used telescope”
-    - Another interprets “kid had telescope”
-    Both interpretations are preserved.
-
-Reason 3 — Subspace Specialization  
-    Splitting 512 → 8×64 forces each head to learn a different subspace:
-        syntax
-        semantics
-        grammar
-        objects
-        pronouns
-        long-range links
-
-Reason 4 — Improves Model Expressiveness  
-    Multiple heads create richer, more diverse attention patterns.
-
-Reason 5 — Stability & Learning Efficiency  
-    Smaller heads are easier to train.
-    Many small heads > one huge head.
-
--------------------------------------------
-5. Summary (for interviews & revision)
--------------------------------------------
-
-Multi-Head Attention = multiple Self-Attention units running in parallel.
-
-Each head:
-    - has its own W_Q, W_K, W_V
-    - learns a different linguistic pattern
-    - outputs a 64-dimensional vector
-
-All heads together:
-    - capture different relationships
-    - resolve ambiguities
-    - create a richer representation
-
-Final step:
-    - concatenate heads
-    - project back to 512-dim using Wᴼ
-
-This makes the Transformer flexible, powerful, and good at understanding complex language structures.
-
-=================================================================
-2. Multi-Head Attention — Dimension Flow (With Shapes)
-===================================================================
-
-We start with:
-    Sequence length = N
-    Embedding size = d_model
-    Number of heads = h
-    Per-head dimension = d_head = d_model / h
-
-Example (Transformer):
-    d_model = 512
-    h = 8
-    d_head = 512 / 8 = 64
-
-
--------------------------------------------
-Step 1 — Input Embeddings (X)
--------------------------------------------
-
-X has shape:
-    (N × d_model)
-
-Example:
-    2 tokens → shape = (2 × 512)
-
--------------------------------------------
-Step 2 — Linear Projections for Each Head
--------------------------------------------
-
-For each head h, we learn:
-    W_Qʰ : (d_model × d_head)
-    W_Kʰ : (d_model × d_head)
-    W_Vʰ : (d_model × d_head)
-
-We compute:
-    Qʰ = X × W_Qʰ     → shape (N × 64)
-    Kʰ = X × W_Kʰ     → shape (N × 64)
-    Vʰ = X × W_Vʰ     → shape (N × 64)
-
-So each head produces:
-    Qʰ, Kʰ, Vʰ → (N × 64)
-
-
--------------------------------------------
-Step 3 — Scaled Dot-Product Attention per Head
--------------------------------------------
-
-Attention computes:
-
-    scores = Qʰ × (Kʰ)ᵀ            → (N × N)
-    weights = softmax(scores)      → (N × N)
-    Zʰ = weights × Vʰ              → (N × 64)
-
-Zʰ is the output of head h.
-
-
--------------------------------------------
-Step 4 — Concatenate All Heads
--------------------------------------------
-
-We have h heads:
-    Z¹, Z², ..., Zʰ
-
-Each has shape:
-    (N × 64)
-
-Concatenation:
-    Concat(Z¹…Zʰ)  → shape (N × (h × d_head))
-                    → shape (N × 512)
-
-
--------------------------------------------
-Step 5 — Final Linear Projection (Wᴼ)
--------------------------------------------
-
-Wᴼ has shape:
-    (d_model × d_model)
-    (512 × 512)
-
-Final output:
-    Z_final = Concat(Z¹…Z⁸) × Wᴼ
-
-Shape:
-    (N × 512)
-
-
--------------------------------------------
-Full Dimension Summary
--------------------------------------------
-
-X               : (N × 512)
-W_Q, W_K, W_V   : (512 × 64)
-Q, K, V         : (N × 64)
-scores          : (N × N)
-weights         : (N × N)
-Zʰ (head output): (N × 64)
-Concat          : (N × 512)
-Wᴼ              : (512 × 512)
-Z_final         : (N × 512)
-
--------------------------------------------
-Key Insight
-
-Multi-Head Attention:
-- splits the model dimension into smaller subspaces (64 dim per head)
-- performs attention independently in each subspace
-- recombines them back into the full 512-dimensional space
-
-
-===========================================
-3. Why Splitting Improves Learning (Intuition)
-===========================================
-
-A single attention head sees the entire embedding space (512 dimensions)
-and produces one attention pattern.  
-Multi-Head Attention SPLITS this space into smaller subspaces:
-
-    512 → 8×64  (for 8 heads)
-
-Each head gets its own “view” of the sentence and learns something different.
-This dramatically improves the model’s ability to understand language.
-
-Here are the core reasons:
-
-
--------------------------------------------
-Reason 1 — Multiple Perspectives
--------------------------------------------
-
-Language is multi-dimensional.  
-A single attention head can focus on only ONE type of relationship at a time.
-
-Examples of relationships:
-    - subject ↔ verb
-    - adjective ↔ noun
-    - pronoun ↔ noun (coreference)
-    - object ↔ action
-    - long-range dependencies
-    - negation (“not”)
-    - entity boundaries
-    - syntax vs semantics
-
-Splitting allows each head to specialize:
-    Head 1 → grammar
-    Head 2 → meaning
-    Head 3 → coreference
-    Head 4 → long-range links
+    head 1:  Y_1 = softmax( Q_1 K_1^T / sqrt(d_k) ) V_1
+    head 2:  Y_2 = softmax( Q_2 K_2^T / sqrt(d_k) ) V_2
     ...
+    head h:  Y_h = softmax( Q_h K_h^T / sqrt(d_k) ) V_h
 
-One head = one perspective  
-Many heads = many perspectives simultaneously
+Now the telescope row exists h times over. One head can point it at "saw" while
+another points it at "kid", and both survive into the output.
 
--------------------------------------------
-Reason 2 — Ambiguity Handling
--------------------------------------------
+The heads do not divide the input between them. Every head reads the whole
+sentence and the whole d_model-wide embedding of every word. What differs is
+only the projection each one applies:
 
-Sentence:
-    “The man saw a kid with a telescope.”
+    "head 1 gets dimensions 1 to 64 of X"        WRONG
+    "head 1 projects all d_model dimensions
+     of X down to its own 64"                    RIGHT
 
-Two possible meanings:
-    1) The man had the telescope.
-    2) The kid had the telescope.
+Each head chooses its own d_k-dimensional view of the same complete input.
 
-One head cannot capture both interpretations.  
-Multi-Head Attention allows:
+To keep the layer's output the same width as its input, the per-head width is
 
-    Head 1 → focuses on (man ↔ telescope)
-    Head 2 → focuses on (kid ↔ telescope)
+    d_k = d_v = d_model / h
 
-The model keeps BOTH meanings alive until later layers decide.
+so that h outputs of width d_v stack back up to exactly d_model. This is also
+why d_model must be divisible by h. In the original paper:
 
+    d_model = 512,  h = 8,  d_k = d_v = 64
 
--------------------------------------------
-Reason 3 — Subspace Specialization
--------------------------------------------
+Note what this does to the scaling factor from note 02 section 5. The divisor is
+sqrt(d_k), and d_k is now the per-head width, so it is sqrt(64) = 8, not
+sqrt(512). Change h and the divisor changes with it.
 
-Splitting 512 dimensions into 64-dim chunks forces each head to learn
-a different aspect of the embedding space.
-
-Think of a huge problem broken into smaller, simpler ones:
-    512-dim problem → 8 × 64-dim problems
-
-Each 64-dim subspace is:
-    - simpler
-    - easier to optimize
-    - faster to learn
-    - better at capturing a specific linguistic pattern
-
-This divide-and-conquer strategy is one of the biggest reasons
-Transformers train stably and efficiently.
+A mask, if there is one, is the same for every head: which pairs are allowed to
+attend does not depend on which view is being taken.
 
 
--------------------------------------------
-Reason 4 — Reduced Interference
--------------------------------------------
+3. Shapes, End to End
+--------------------------------------------------------------------------------
 
-In one large head, all patterns compete inside the same 512 dimensions.
-Patterns can interfere with each other.
+Per head, with n tokens:
 
-In multi-heads:
-    Each head learns independently.
-    No interference.
-    Gradients don’t clash.
+    X                    (n x d_model)      same input for every head
+    W_Q, W_K             (d_model x d_k)
+    W_V                  (d_model x d_v)
+    Q_i, K_i             (n x d_k)
+    S_i = Q_i K_i^T      (n x n)            one score matrix per head
+    A_i = softmax(.)     (n x n)
+    Y_i = A_i V_i        (n x d_v)
 
-This isolation makes learning cleaner and more structured.
+Combining the heads:
 
+    Concat(Y_1 ... Y_h)  (n x h*d_v) = (n x d_model)
+    W_O                  (d_model x d_model)
+    output               (n x d_model)
 
--------------------------------------------
-Reason 5 — Increased Model Expressiveness
--------------------------------------------
+    MultiHead(X) = Concat(Y_1, ..., Y_h) W_O
 
-A single attention head = linear projection + dot-product attention  
-Multiple heads = mixture of many different linear subspaces
+In and out are both (n x d_model), which is what lets these layers stack.
 
-This dramatically increases:
-    - expressive power
-    - representational richness
-    - pattern diversity
+In code the heads are not a loop. One W_Q of shape (d_model x d_model) projects
+everything at once, and the result is reshaped to give each head its slice:
 
-Simply put:
-    Many small heads > One big head
+    (batch, seq_len, d_model)
+        -> project
+    (batch, seq_len, d_model)
+        -> reshape to (batch, seq_len, h, d_k), transpose
+    (batch, h, seq_len, d_k)        heads become a batch dimension
 
-The combined output captures FAR more information than
-a single attention map ever could.
+    scores                          (batch, h, seq_len, seq_len)
+    per-head output                 (batch, h, seq_len, d_k)
+        -> transpose back, merge last two axes
+    (batch, seq_len, d_model)
+        -> W_O
+    (batch, seq_len, d_model)
 
-
--------------------------------------------
-Reason 6 — Empirical Result (the real reason)
--------------------------------------------
-
-The Transformer paper tried:
-    - 1 head  
-    - 2 heads  
-    - 4 heads  
-    - 8 heads  
-    - 16 heads  
-
-And found:
-    → performance increases with number of heads  
-    → until ~8 heads (for 512-d model)
-
-Too many heads = each head becomes too small  
-Too few heads = not enough perspectives
+Mathematically this is identical to h separate (d_model x d_k) matrices - those
+matrices are just column blocks of the single large one. The GPU does one big
+multiplication instead of h small ones.
 
 
-Summary (one-line)
+4. Why It Costs Almost Nothing
+--------------------------------------------------------------------------------
+Not understood completely
 
-Splitting attention creates multiple specialized “views” of the sentence,
-making the Transformer far better at capturing complex and ambiguous language patterns.
+The natural worry is that h heads cost h times as much. They do not, because the
+heads got narrower by exactly the factor they multiplied by.
 
+Projections, one head of full width d_model:
+
+    n * d_model * d_model
+
+Projections, h heads of width d_k = d_model / h:
+
+    h * ( n * d_model * d_k ) = n * d_model * ( h * d_k ) = n * d_model * d_model
+
+Identical. The same cancellation happens inside attention: each head's scores
+cost n^2 * d_k, and h of them come to n^2 * d_model, which is what a single
+full-width head costs on its own.
+
+So h perspectives cost what one perspective costs. Two honest qualifications:
+
+W_O is genuinely extra - one more (d_model x d_model) projection that
+single-head attention does not need.
+
+Memory is not free. Each head keeps its own n x n matrix, so the attention
+matrices take h times the space of a single head. Note 02 section 8.2 put
+self-attention at O(n^2); with heads it is O(h * n^2), and that is the term that
+runs a GPU out of memory on long sequences.
+
+
+5. Why Concatenate and Then W_O
+--------------------------------------------------------------------------------
+
+Averaging or summing the heads would be simpler. It would also throw away what
+the heads were for: if head 1 found the "saw" reading and head 2 the "kid"
+reading, averaging blends them into a single blurred vector, which is what one
+head produced in the first place.
+
+Concatenation instead keeps every head's output intact, each in its own slice of
+the d_model-wide vector. Nothing is lost at that point - but nothing is combined
+either, and the slices are stranded: dimensions 1 to 64 would always come from
+head 1 and never mix with the rest.
+
+W_O is the layer that mixes them. Every output dimension becomes a learned
+weighted combination of all h head outputs, so the model decides how much of each
+head's finding matters and how they should interact. Concat preserves, W_O
+combines - both steps are needed.
+
+
+6. What Heads Actually Learn
+--------------------------------------------------------------------------------
+
+It is tempting to say head 1 handles grammar, head 2 handles meaning, and so on.
+Nothing in the architecture arranges that. Every head has the same structure and
+sees the same input; the only thing separating them is that their weights start
+at different random values and gradient descent moves them apart. Specialization
+is a tendency that emerges, not a rule that is imposed.
+
+What is actually observed in trained models: some heads track syntactic relations
+such as verb to subject, some attend mostly to the previous or next token, some
+focus on rare words. Many heads learn nothing distinctive at all - pruning studies
+remove a large fraction of the heads of a trained model with little loss in
+quality. Heads are also not independent, as they are mixed by W_O and trained
+through a single shared loss.
+
+On how many to use, the paper's own ablation is the honest answer: one head is
+clearly worse, quality improves up to about 8 heads at d_model = 512, and using
+too many is worse again, because a fixed d_model split more ways leaves each head
+too narrow to represent anything useful. h trades number of perspectives against
+the width of each.
+
+This whole layer is one sublayer of the encoder and decoder blocks. What wraps it
+is in note 05, and how it is stacked is in note 07.
+
+
+7. Practice Questions
+--------------------------------------------------------------------------------
+
+Q1: Does 8-head attention cost roughly 8 times a single head?
+A:  No. Per-head width is d_model / h, so the h projections come to
+    n * d_model * (h * d_k) = n * d_model^2, the same as one full-width head, and
+    the same cancellation applies to the scores and the blend. The real extras are
+    W_O, one additional (d_model x d_model) projection, and memory: h score
+    matrices of n x n instead of one.
+
+Q2: With d_model = 512 and h = 8, does head 1 operate on dimensions 1 to 64 of
+    the input?
+A:  No. Every head reads all 512 dimensions of every token. W_Q for head 1 is
+    (512 x 64): it maps the full input into that head's own 64-dimensional view.
+    The 64-wide slices appear in the output, not the input.
+
+Q3: Why concatenate the head outputs and apply W_O instead of averaging them?
+A:  Averaging merges the heads' distinct findings back into one blurred vector,
+    undoing the reason for having heads. Concatenation preserves each head's
+    output in its own slice, and W_O then learns how to mix those slices. Without
+    W_O the slices would never interact.
+
+Q4: With d_model = 512 and h = 8, what is the divisor inside the softmax?
+A:  sqrt(d_k) = sqrt(64) = 8. The scaling from note 02 section 5 counts the terms
+    in the dot product, and that is the per-head width, not d_model.
+
+Q5: Is it correct that heads learn independent, non-interfering patterns?
+A:  No. Heads start from different random initializations and tend to diverge, but
+    nothing enforces specialization, W_O mixes their outputs, and one loss trains
+    them all. Trained models routinely contain redundant heads that can be pruned
+    with little effect.

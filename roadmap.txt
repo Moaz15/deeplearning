@@ -1,0 +1,434 @@
+================================================================================
+DEEP LEARNING - ROADMAP
+The full syllabus of this repository, in the order it should be learned.
+================================================================================
+
+--------------------------------------------------------------------------------
+PREFACE
+--------------------------------------------------------------------------------
+
+So the syllabus below is not a list of things to know. It is a chain of
+failures. The perceptron fails on XOR, so we stack layers. Stacked layers cannot
+be trained by hand, so we need backpropagation. Backprop on deep stacks explodes
+and vanishes, so we need better initialisation, activations and normalisation.
+Trained networks memorise, so we need regularisation. Dense layers ignore that
+pixels near each other are related, so we need convolution. Convolution cannot
+carry information across time, so we need recurrence. Recurrence forgets, so we
+need gates. Gates still force one bottleneck vector, so we need attention.
+Attention makes recurrence unnecessary, so we get the Transformer. Read the
+roadmap that way and the field stops being a catalogue of tricks.
+
+Each topic in the repo follows the same layout:
+
+    <topic>/
+      theory/    plain-text notes - the primary artifact
+      code/      from-scratch implementations that mirror the notes
+
+Theory is written first. Code is written to match the notation and staging of
+the notes, never the other way around.
+
+--------------------------------------------------------------------------------
+HOW TO READ THIS SYLLABUS
+--------------------------------------------------------------------------------
+
+Parts I to IV are the spine. They are prerequisites for everything after, and
+should be read in order.
+
+Parts V onward are the architecture families. They can be read in any order once
+the spine is done, but the listed order is the historical and pedagogical one -
+each family removes a limitation of the previous.
+
+Parts XI to XIV are practice: how models are trained at scale, deployed,
+compressed, and judged. They are not optional extras; a model that only exists
+in a notebook is only half understood.
+
+
+PART I - FOUNDATIONS
+================================================================================
+
+Chapter 1. What a learning system is
+    1.1  Rules vs learned mappings - why we stopped writing if-statements
+    1.2  Supervised, unsupervised, self-supervised, reinforcement
+    1.3  The function-approximation view: data in, parameters, prediction out
+    1.4  Train / validation / test, and why the split must be honest
+    1.5  Generalisation as the only real goal
+
+Chapter 2. Mathematical machinery (only what is used)
+    2.1  Vectors, matrices, tensors - and what a shape means physically
+    2.2  Matrix multiplication as a batch of dot products
+    2.3  Broadcasting rules and the bugs they hide
+    2.4  Derivatives, partial derivatives, the gradient as a direction
+    2.5  The chain rule - the single idea behind all of training
+    2.6  Jacobians and why we never build them explicitly
+    2.7  Probability: distributions, expectation, likelihood
+    2.8  Entropy, cross-entropy, KL divergence - what "surprise" means numerically
+
+Chapter 3. The computational substrate
+    3.1  Floating point, precision, overflow, underflow
+    3.2  Why GPUs changed the field - throughput vs latency
+    3.3  Tensors in practice: contiguity, views, reshaping, memory layout
+    3.4  Automatic differentiation: forward mode, reverse mode, the tape
+    3.5  Reading a shape error like a sentence
+
+
+================================================================================
+PART II - THE NEURON AND THE NETWORK
+================================================================================
+
+Chapter 4. Perceptron                                  [partial - perceptron/]
+    4.1  The biological analogy and where it stops being useful
+    4.2  Weighted sum, bias, step activation
+    4.3  The perceptron learning rule, worked by hand
+    4.4  Geometric view: a hyperplane splitting space
+    4.5  The convergence theorem and what it promises
+    4.6  The XOR failure - the exact reason a single neuron is not enough
+
+Chapter 5. Multi-layer perceptron
+    5.1  Stacking layers, and why linear-on-linear is still linear
+    5.2  Non-linearity as the thing that buys expressive power
+    5.3  Hidden layers as learned feature detectors
+    5.4  Universal approximation - what it actually says, and does not
+    5.5  Width vs depth: why depth is cheaper
+    5.6  Forward pass in matrix form, batch dimension included
+
+Chapter 6. Loss functions
+    6.1  Loss as the definition of "wrong"
+    6.2  MSE and MAE - regression, and their different opinions on outliers
+    6.3  Binary cross-entropy from maximum likelihood
+    6.4  Softmax and categorical cross-entropy
+    6.5  Why log-sum-exp is computed the stable way
+    6.6  Hinge, Huber, focal - when the default is the wrong default
+    6.7  Class imbalance and weighted losses
+
+
+================================================================================
+PART III - TRAINING
+================================================================================
+
+Chapter 7. Gradient descent
+    7.1  The loss surface, and descent as a local decision
+    7.2  Batch, stochastic, mini-batch - the noise/compute trade-off
+    7.3  Learning rate: divergence, crawling, and the useful middle
+    7.4  Local minima, saddle points, plateaus - which ones actually hurt
+
+Chapter 8. Backpropagation
+    8.1  The credit assignment problem
+    8.2  Chain rule over a computation graph
+    8.3  Backprop by hand on a two-layer network, every number shown
+    8.4  Vectorised backprop, shapes at each step
+    8.5  Gradient checking
+    8.6  Why gradients vanish and explode with depth
+
+Chapter 9. Optimisers
+    9.1  Momentum - averaging away the zig-zag
+    9.2  Nesterov accelerated gradient
+    9.3  AdaGrad and per-parameter learning rates
+    9.4  RMSProp - fixing AdaGrad's decaying step
+    9.5  Adam, and the bias correction term
+    9.6  AdamW: why weight decay is not L2 in adaptive optimisers
+    9.7  Learning-rate schedules: step, cosine, warmup, one-cycle
+    9.8  Gradient clipping, accumulation, and effective batch size
+    9.9  Newer optimisers (LAMB, Lion, Shampoo/Muon) and what they buy
+
+Chapter 10. Making deep networks trainable
+    10.1  Activations: sigmoid, tanh, ReLU, LeakyReLU, ELU, GELU, SiLU, GLU family
+    10.2  Dying ReLU and the saturation problem
+    10.3  Initialisation: zero, random, Xavier/Glorot, He - variance arguments
+    10.4  Internal covariate shift, and the honest account of what BatchNorm does
+    10.5  BatchNorm, LayerNorm, GroupNorm, RMSNorm - and when each applies
+    10.6  Residual connections: gradient highways
+    10.7  Pre-norm vs post-norm
+
+Chapter 11. Regularisation and generalisation
+    11.1  Overfitting and underfitting, diagnosed from curves
+    11.2  Bias-variance, and why the classical picture is incomplete
+    11.3  L1 and L2 penalties, and what each does to weights
+    11.4  Dropout, and its train/test asymmetry
+    11.5  Early stopping
+    11.6  Data augmentation as a prior
+    11.7  Label smoothing, mixup, cutmix
+    11.8  Double descent and the modern overparameterised regime
+
+Chapter 12. The practical training loop
+    12.1  Dataset, dataloader, batching, shuffling, collation
+    12.2  Epochs, steps, and what a step really costs
+    12.3  Hyperparameter search: grid, random, Bayesian
+    12.4  Reading loss curves - the standard failure signatures
+    12.5  Reproducibility: seeds, determinism, and its price
+    12.6  Debugging checklist: overfit one batch first
+
+
+================================================================================
+PART IV - CONVOLUTIONAL NETWORKS
+================================================================================
+
+Chapter 13. Convolution                                            [planned]
+    13.1  Why a dense layer on an image is the wrong shape of assumption
+    13.2  Local receptive fields and weight sharing
+    13.3  Kernels, stride, padding, dilation - output-size arithmetic
+    13.4  Channels, and the 3D nature of a real kernel
+    13.5  Pooling: max, average, global
+    13.6  Translation equivariance vs invariance
+    13.7  Receptive field growth with depth
+    13.8  Backprop through a convolution
+
+Chapter 14. CNN architectures as a sequence of fixes
+    14.1  LeNet - the template
+    14.2  AlexNet - depth, ReLU, GPUs, dropout
+    14.3  VGG - the 3x3 stack argument
+    14.4  Inception - multi-scale in one block, 1x1 as cheap mixing
+    14.5  ResNet - the degradation problem and identity shortcuts
+    14.6  DenseNet, ResNeXt, SENet - reuse, cardinality, channel attention
+    14.7  MobileNet / EfficientNet - depthwise separable convolution, scaling laws
+    14.8  ConvNeXt - what convolutions look like after the Transformer era
+
+Chapter 15. Vision tasks beyond classification
+    15.1  Transfer learning and fine-tuning strategy
+    15.2  Object detection: R-CNN family, YOLO, SSD, DETR
+    15.3  Semantic and instance segmentation: FCN, U-Net, Mask R-CNN
+    15.4  Keypoints, pose, depth
+    15.5  Evaluation: IoU, mAP, Dice
+
+
+================================================================================
+PART V - SEQUENCE MODELS
+================================================================================
+
+Chapter 16. Recurrent neural networks                    [partial - RNN/]
+    16.1  Why sequences break the fixed-input assumption
+    16.2  Padding and its wasted computation
+    16.3  The hidden state as memory
+    16.4  Forward propagation through time, unrolled
+    16.5  Backpropagation through time, and truncation
+    16.6  Vanishing/exploding gradients in the recurrent setting
+    16.7  Input/output shapes: many-to-one, many-to-many, one-to-many
+
+Chapter 17. Gated recurrent architectures                          [planned]
+    17.1  The long-dependency failure, stated concretely
+    17.2  LSTM: cell state, forget/input/output gates, the constant error carousel
+    17.3  GRU: update and reset gates, and what it drops
+    17.4  Bidirectional and stacked recurrence
+    17.5  Where RNNs still win
+
+Chapter 18. Encoder-decoder and the road to attention               [planned]
+    18.1  Seq2seq for translation
+    18.2  The fixed context-vector bottleneck
+    18.3  Bahdanau (additive) attention
+    18.4  Luong (multiplicative) attention
+    18.5  Alignment as a learned soft lookup
+
+
+================================================================================
+PART VI - TRANSFORMERS
+================================================================================
+Home: NLP/Transformer/ - see NLP/Transformer/context.md for detailed status.
+
+Chapter 19. Representing language                                     [done]
+    19.1  Tokens, vocabulary, IDs                             (01_word_token_vector)
+    19.2  Tokenisation: word, character, BPE, WordPiece, SentencePiece
+    19.3  Embeddings as learned lookup tables
+    19.4  The embedding matrix and weight tying
+
+Chapter 20. Attention                                                 [done]
+    20.1  Self-attention: query, key, value                      (02_self_attention)
+    20.2  Scaled dot-product and the sqrt(d_k) variance argument
+    20.3  Order-blindness, and positional encoding             (03_positional_encoding)
+    20.4  Learned, relative, RoPE, ALiBi                (03b_modern_positional_encoding)
+    20.5  Multi-head attention - subspaces, splitting, concatenation
+                                                            (04_multihead_attention)
+    20.6  Causal masking and padding masks              (08_masked_multihead_attention)
+    20.7  Cross-attention                                       (09_cross_attention)
+
+Chapter 21. The block                                                 [done]
+    21.1  Residual connection and normalisation                  (05_add_and_norm)
+    21.2  Position-wise feed-forward network                (06_feed_forward_network)
+    21.3  Encoder stack                                     (07_encoder_architecture)
+    21.4  Decoder stack                                     (10_decoder_architecture)
+
+Chapter 22. Using a Transformer                                       [done]
+    22.1  Teacher forcing, loss, label smoothing                       (11_training)
+    22.2  Autoregressive decoding, KV cache                           (12_inference)
+    22.3  Decoding strategies: greedy, beam, top-k, top-p, temperature
+    22.4  Encoder-only, decoder-only, encoder-decoder         (13_architecture_variants)
+    22.5  Efficient attention: sparse, linear, flash, MQA/GQA    (14_efficient_attention)
+
+Chapter 23. From-scratch implementation                            [partial]
+    23.1  scratch_code/model.py - components mirroring the notes above
+    23.2  A small end-to-end training run on a toy translation task
+
+
+================================================================================
+PART VII - PRETRAINING AND LANGUAGE MODELS
+================================================================================
+
+Chapter 24. Self-supervised objectives                              [planned]
+    24.1  Why labels ran out
+    24.2  Masked language modelling - BERT family
+    24.3  Causal language modelling - GPT family
+    24.4  Denoising and span corruption - T5, BART
+    24.5  Contrastive objectives - SimCLR, CLIP
+
+Chapter 25. Scale                                                   [planned]
+    25.1  Scaling laws: parameters, data, compute
+    25.2  Chinchilla and compute-optimal training
+    25.3  Emergent behaviour, and the argument about whether it is real
+    25.4  Mixture of experts - conditional computation
+
+Chapter 26. Adapting a pretrained model                             [planned]
+    26.1  Full fine-tuning vs feature extraction
+    26.2  Parameter-efficient methods: adapters, LoRA, QLoRA, prefix tuning
+    26.3  Instruction tuning
+    26.4  RLHF: reward model, PPO
+    26.5  Preference optimisation without RL: DPO and relatives
+    26.6  In-context learning, few-shot prompting, chain of thought
+    26.7  Retrieval-augmented generation
+
+
+================================================================================
+PART VIII - GENERATIVE MODELS
+================================================================================
+
+Chapter 27. Autoencoders                                            [planned]
+    27.1  Compression as a learning signal
+    27.2  Undercomplete, denoising, sparse
+    27.3  The latent space and what it organises
+
+Chapter 28. Variational autoencoders                                [planned]
+    28.1  Why a plain autoencoder cannot generate
+    28.2  Latent distributions and the ELBO
+    28.3  The reparameterisation trick
+    28.4  Posterior collapse
+
+Chapter 29. Generative adversarial networks                         [planned]
+    29.1  The two-player game
+    29.2  Generator, discriminator, minimax loss
+    29.3  Mode collapse and training instability
+    29.4  DCGAN, WGAN, StyleGAN, conditional GANs, CycleGAN
+
+Chapter 30. Diffusion models                                        [planned]
+    30.1  Forward noising process
+    30.2  Learning to denoise
+    30.3  DDPM and DDIM sampling
+    30.4  Latent diffusion, classifier-free guidance
+    30.5  Text-to-image conditioning
+    30.6  Flow matching and the connection to diffusion
+
+Chapter 31. Other generative families                               [planned]
+    31.1  Autoregressive image and audio models (PixelCNN, WaveNet)
+    31.2  Normalising flows
+    31.3  Energy-based models
+
+
+================================================================================
+PART IX - REPRESENTATION, GRAPHS, AND MULTIMODAL
+================================================================================
+
+Chapter 32. Embeddings and representation learning                  [planned]
+    32.1  Word2Vec, GloVe, fastText
+    32.2  Contextual vs static embeddings
+    32.3  Sentence embeddings and similarity search
+    32.4  Vector databases and approximate nearest neighbours
+
+Chapter 33. Graph neural networks                                   [planned]
+    33.1  Data that is not a grid or a sequence
+    33.2  Message passing
+    33.3  GCN, GraphSAGE, GAT
+    33.4  Over-smoothing
+
+Chapter 34. Multimodal models                                       [planned]
+    34.1  Aligning two modalities in one space - CLIP
+    34.2  Vision Transformers, patches as tokens
+    34.3  Vision-language models and image-conditioned generation
+    34.4  Speech: spectrograms, CTC, Whisper-style encoders
+
+
+================================================================================
+PART X - REINFORCEMENT LEARNING
+================================================================================
+
+Chapter 35. Foundations                                             [planned]
+    35.1  Agent, environment, state, action, reward
+    35.2  Markov decision processes
+    35.3  Value functions, policies, Bellman equations
+    35.4  Exploration vs exploitation
+
+Chapter 36. Deep RL                                                 [planned]
+    36.1  Q-learning to DQN: replay buffer, target network
+    36.2  Policy gradients, REINFORCE
+    36.3  Actor-critic, A2C/A3C
+    36.4  PPO, and why it dominates in practice
+    36.5  RL applied to language models
+
+
+================================================================================
+PART XI - TRAINING AT SCALE
+================================================================================
+
+Chapter 37. Hardware and precision                                  [planned]
+    37.1  GPU memory: what actually occupies it during training
+    37.2  Mixed precision, fp16/bf16, loss scaling
+    37.3  Gradient checkpointing
+    37.4  Kernel fusion, and why FlashAttention is a memory story
+
+Chapter 38. Distributed training                                    [planned]
+    38.1  Data parallelism, DDP, gradient all-reduce
+    38.2  Model, tensor, and pipeline parallelism
+    38.3  ZeRO / FSDP sharding
+    38.4  Communication cost as the real bottleneck
+
+
+================================================================================
+PART XII - EVALUATION AND INTERPRETATION
+================================================================================
+
+Chapter 39. Evaluation                                              [planned]
+    39.1  Accuracy, precision, recall, F1, ROC-AUC, PR-AUC
+    39.2  Perplexity, BLEU, ROUGE, and their limits
+    39.3  Human evaluation and LLM-as-judge
+    39.4  Benchmarks, contamination, and overfitting to leaderboards
+
+Chapter 40. Interpretability                                        [planned]
+    40.1  Saliency maps, Grad-CAM
+    40.2  Attention maps - and why they are not explanations
+    40.3  Probing classifiers
+    40.4  Feature attribution: SHAP, integrated gradients
+    40.5  Mechanistic interpretability: circuits, sparse autoencoders
+
+Chapter 41. Robustness and failure modes                            [planned]
+    41.1  Adversarial examples
+    41.2  Distribution shift and calibration
+    41.3  Hallucination in generative models
+    41.4  Bias in data and in outputs
+
+
+================================================================================
+PART XIII - DEPLOYMENT
+================================================================================
+
+Chapter 42. Making models small and fast                            [planned]
+    42.1  Quantisation: post-training, QAT, int8/int4
+    42.2  Pruning, structured and unstructured
+    42.3  Knowledge distillation
+    42.4  Compilation and export: ONNX, TorchScript, torch.compile
+
+Chapter 43. Serving                                                 [planned]
+    43.1  Latency, throughput, batching, continuous batching
+    43.2  Caching, streaming, speculative decoding
+    43.3  Monitoring, drift detection, retraining loops
+
+
+================================================================================
+PART XIV - PROJECTS
+================================================================================
+Each project is written only after its theory chapters are done, and is
+implemented from scratch where scratch teaches something.
+
+    P1  Perceptron on a linearly separable dataset, then XOR failing   [partial]
+    P2  MLP with hand-written backprop, NumPy only
+    P3  Optimiser comparison on one fixed model
+    P4  CNN on CIFAR-10 from scratch, then with transfer learning
+    P5  Character-level RNN, then LSTM, on the same corpus
+    P6  Transformer translation model from scratch                    [partial]
+    P7  Fine-tune a pretrained model with LoRA
+    P8  A small diffusion model on a simple image dataset
+    P9  RAG pipeline end to end

@@ -1,195 +1,676 @@
-1. Why Positional Encoding is Needed
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+POSITIONAL ENCODING
+================================================================================
 
-Self-Attention is powerful but has one major limitation:
+1. The Problem: Attention Cannot See Order
+--------------------------------------------------------------------------------
 
-    → It has NO understanding of word order.
+02_self_attention.txt section 9 ended on a defect. Self-attention is permutation
+equivariant: permute the input rows and the output rows are permuted the same
+way, with identical values. Nothing in Q K^T, in the softmax, or in the blend
+refers to where a word sits.
 
-It treats sentences as a bag of words:
+So these two sentences produce the same set of vectors:
 
-    “Moaz killed Lion”
-    “Lion killed Moaz”
+    Moaz killed Lion
+    Lion killed Moaz
 
-Both look identical to Self-Attention:
-    {Moaz, killed, Lion}
+To the layer both are the multiset {Moaz, killed, Lion}. Q, K and V are computed
+from embeddings alone, every pair is compared, and the result is gathered by a
+sum - and a sum does not care about the order of its terms.
 
-Because:
-- Q, K, V depend only on embeddings.
-- Attention compares all words with all words.
-- Nothing encodes sequence order.
+That is fatal, because word order carries meaning:
 
-This means the model cannot understand:
-- who is the subject/object
-- who did what to whom
-- whether "not" modifies a verb
-- grammatical structure based on position
+    who is the subject and who is the object
+    "the dog bit the man" vs "the man bit the dog"
+    what "not" attaches to: "he is not happy to leave" vs "he is happy not to leave"
+    which noun a pronoun points back to
 
-Self-Attention is position-invariant → good for semantics, bad for sequences.
+Recurrence got order for free - a word's position was its step number
+(02 section 2.1). We removed recurrence to gain parallelism, and order was the
+price (02 section 2.6). This note pays it.
 
+The fix has to work with what the layer actually reads. The layer reads one
+vector per word. So the position must be written INTO those vectors, before
+attention runs:
 
-Why Simple Numbering (1, 2, 3...) Fails
----------------------------------------
+    input to attention = something about the word + something about where it is
 
-Attempt: Assign each word its index.
+Everything below is about what that second thing should be.
 
-    Moaz = 1
-    killed = 2
-    Lion = 3
+================================================================================
 
-This fails for 3 reasons:
+2. The Obvious Fixes and Why They Fail
+--------------------------------------------------------------------------------
 
-Problem 1 — Unbounded Sequence Length
-    Positions grow without limit (1, 100, 10000...)
-    Models cannot generalize to unseen large indices.
+2.1 Attempt 1 - Append the Raw Index
+------------------------------------
 
-Problem 2 — Discrete (No Smoothness)
-    Attention needs continuous/linear structure.
-    Raw integers have:
-        - no smooth transition
-        - no pattern
-        - no periodicity
-        - no generalizable structure
-    They do not interact well with Q, K, V projections.
+Give each word its index and stick it into the vector:
 
-Problem 3 — No Relative Position Information
-    Absolute indices tell:
-        Moaz = 1, killed = 2, Lion = 3
-    But not:
-        - Moaz comes before killed
-        - Moaz is 1 step away from killed
-        - killed is between Moaz and Lion
+    Moaz   -> 0
+    killed -> 1
+    Lion   -> 2
 
-Meaning depends on RELATIVE order → absolute numbers cannot encode this.
+Three things break.
 
-Therefore:
-We need something continuous, smooth, generalizable, and capable of encoding both absolute and relative position.
+The number is unbounded. Embedding components sit at roughly unit scale. At
+position 3000 the positional component is 3000. One dimension now dwarfs all the
+others; every dot product in attention is dominated by it, and the actual word
+meaning becomes rounding error.
 
+The model never sees most of the values. Trained on sentences up to length 500,
+it learns what 0..500 means in that slot. Position 5000 is a value it has never
+encountered, and there is nothing in the mechanism that makes 5000 behave like a
+continuation of the pattern.
 
-2. Sinusoidal Positional Encoding (Original Transformer Method)
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+One number carries almost no information. A single scalar has to distinguish
+every position, so it must use magnitude alone. Meaning is spread across
+d_model dimensions; position gets one.
 
-To encode order effectively, the Transformer introduces:
-    ✔ Sine waves
-    ✔ Cosine waves
-    ✔ Across multiple frequencies
+2.2 Attempt 2 - Normalize by Sentence Length
+--------------------------------------------
 
-This solves all problems of absolute numbering.
+Fix the unbounded range: divide the index by the sentence length, so positions
+always land in [0, 1].
 
+    3-word sentence:   0.00, 0.50, 1.00
+    5-word sentence:   0.00, 0.25, 0.50, 0.75, 1.00
 
-Why Trigonometric Functions?
+Now the same number means different things in different sentences. 0.5 is
+position 1 in the first and position 2 in the second. Worse, the gap between
+adjacent words changes with sentence length - a step of 0.5 in one sentence and
+0.25 in the other. "The next word" no longer has a consistent representation, so
+whatever the model learns about spacing on short sentences is wrong on long ones.
+
+A positional signal must depend on the position, not on how long the sentence
+happens to be.
+
+2.3 Attempt 3 - One-Hot the Position
+------------------------------------
+
+Give position p a vector that is 1 in slot p and 0 everywhere else.
+
+Bounded, unique, consistent across sentences. It fails on the other two counts.
+It needs a fixed maximum length chosen up front, with a dimension reserved per
+position - hundreds or thousands of dimensions to carry one fact. And every pair
+of distinct positions is exactly the same distance apart: position 5 is no closer
+to position 6 than to position 500. All notion of nearness, which is most of what
+order is for, is destroyed.
+
+2.4 What the Signal Actually Has to Do
+--------------------------------------
+
+The three failures give the requirements:
+
+    1. Unique       different positions get different vectors
+    2. Bounded      values stay at the same scale as embedding components, at
+                    every position
+    3. Consistent   position 5 is the same vector in every sentence, whatever
+                    the length
+    4. Smooth       nearby positions get nearby vectors, so "one step apart" is
+                    a small, learnable change
+    5. Extrapolates positions longer than anything seen in training still get
+                    sensible vectors
+    6. Relative     the offset between two positions is recoverable, because
+                    grammar depends on distance and direction, not on absolute
+                    index
+
+Requirements 1 and 2 pull against each other: infinitely many positions, finite
+range. Only a repeating function can do both - and repeating means colliding,
+which contradicts 1. Resolving that tension is the whole design.
+
+================================================================================
+
+3. Building the Sinusoid
+--------------------------------------------------------------------------------
+
+3.1 Bounded and Smooth Means a Wave
+-----------------------------------
+
+Requirements 2 and 4 - values that never leave a fixed range, changing gradually
+as position advances - describe an oscillation. Sine is the standard one:
+
+    sin(w * pos)
+
+    always in [-1, 1]              requirement 2
+    continuous in pos              requirement 4
+    defined for every pos          requirement 5, no maximum length baked in
+    depends only on pos            requirement 3, sentence length never appears
+
+w is the angular frequency, and it sets how fast the wave turns. The wavelength
+(how many positions for one full cycle) is 2*pi / w.
+
+3.2 Sine Alone Is Ambiguous Inside One Cycle
+--------------------------------------------
+
+Take a wave of wavelength 12, so w = 2*pi/12 = 0.5236:
+
+    pos = 2   ->  sin(1.047) =  0.866
+    pos = 4   ->  sin(2.094) =  0.866
+
+Two different positions, one value. This is not the period repeating - it is
+sin(a) = sin(pi - a), the wave rising and falling through the same height. Half
+of every cycle is a duplicate of the other half.
+
+Cosine, the same wave shifted a quarter cycle, separates them:
+
+    pos = 2   ->  cos(1.047) =  0.500
+    pos = 4   ->  cos(2.094) = -0.500
+
+Use both, and one frequency contributes a PAIR:
+
+    ( sin(w * pos) , cos(w * pos) )
+
+That pair is a point on the unit circle at angle w*pos. An angle is unique within
+a full turn, so the pair identifies the position uniquely inside one wavelength -
+which sine alone cannot do. This is the real reason cosine is there. It is not
+"extra variation": it is the second coordinate without which the angle is not
+determined.
+
+The pair also has constant length: sin^2 + cos^2 = 1. Every position contributes
+exactly the same magnitude, so no position is louder than another.
+
+3.3 One Frequency Collides Across Cycles
+----------------------------------------
+
+Inside a cycle the pair is unique. Across cycles it is not - that is what
+periodic means:
+
+    wavelength 12:   pos = 2  ->  (0.866,  0.500)
+                     pos = 14 ->  (0.866,  0.500)
+
+Identical. Positions 12 apart are indistinguishable.
+
+Lengthening the wavelength only moves the problem: a wavelength of 10,000 handles
+long documents, but then positions 3 and 4 differ by an angle of 0.0006 radians -
+adjacent words become nearly identical, and the fine local distinctions that
+grammar runs on are gone.
+
+One wave has to choose between resolving neighbours and covering distance. So use
+several, at different wavelengths.
+
+3.4 Many Frequencies: a Positional Fingerprint
+----------------------------------------------
+
+Stack several sin/cos pairs, each at its own wavelength, into one vector.
+
+The odometer is the right picture. One dial rolls over constantly and the next is
+slower, so no single dial identifies the reading, but the full set of dials does.
+Fast wavelengths separate neighbouring positions; slow ones say roughly where in
+the document you are.
+
+Two positions collide only if they collide on every wavelength at once. With
+wavelengths that are not simple multiples of each other, the first such
+coincidence is pushed far past any realistic sequence length. Requirement 1 is met
+without giving up requirement 2 - the tension of section 2.4 is resolved by
+spreading position over many bounded dials instead of one unbounded number.
+
+The vector is given d_model components, the same width as the embedding, for the
+reason in section 6: it is added to the embedding, so the shapes must match. That
+buys d_model/2 sin/cos pairs, so d_model/2 distinct frequencies.
+
+3.5 Choosing the Frequencies
 ----------------------------
 
-A. Continuous & Smooth
-    Unlike integer jumps, sine/cosine vary gradually.
-    Good interaction with:
-        - dot products
-        - softmax
-        - linear projections
+The wavelengths run in a GEOMETRIC progression - each roughly a fixed multiple of
+the one before, not a fixed amount larger. For pair index i, from 0 to
+d_model/2 - 1:
 
-B. Unbounded
-    sin(x) and cos(x) work for any sequence length:
-        10, 100, 10,000, 100,000...
+    w_i          = 1 / 10000^(2i / d_model)
+    wavelength_i = 2*pi * 10000^(2i / d_model)
 
-C. Encodes Relative Position
-    Using trigonometric identities:
-        sin(a + b) can be computed from sin(a), cos(a), sin(b), cos(b)
-    Thus:
-        relative distance (pos2 − pos1)
-        is naturally embedded in the patterns.
+    i = 0                 wavelength 2*pi        approximately 6 positions
+    i = d_model/2 - 1     wavelength 2*pi*10000  approximately 62,800 positions
 
+Why geometric and not linear (6, 12, 18, 24, ...)? Because "how far apart" is
+scale-relative. Telling apart positions 3 and 4 needs a fast dial; telling apart
+positions 3000 and 3100 needs a slow one, and a fast dial has wrapped hundreds of
+times by then and says nothing. A geometric ladder gives roughly equal resolving
+power at every scale - the same reason musical octaves, decibels and log-scaled
+axes are spaced multiplicatively.
 
-Why One Sine Wave Is Not Enough
--------------------------------
+Why the constant 10000? It sets the slowest dial. The longest wavelength should
+exceed any sequence the model will see, so the slowest dial does not wrap around
+inside a single input - if it did, two distant positions could match on every
+dial. 2*pi*10000 is about 62,800 positions, comfortably beyond the 512-token
+inputs of the original paper. It is a chosen constant, not a derived one; other
+models pick other values.
 
-A single sine wave repeats every 2π:
+================================================================================
 
-    sin(θ) = sin(θ + 2π)
+4. The Formula
+--------------------------------------------------------------------------------
 
-→ Collisions occur (different positions map to same value):
+4.1 Statement
+-------------
 
-    pos = 1  → sin(1)
-    pos = 7  → sin(7) (≈ 1 + 2π)
+For position pos and pair index i:
 
-Thus, one sine wave cannot represent unique positions.
+    PE(pos, 2i)   = sin( pos / 10000^(2i / d_model) )
+    PE(pos, 2i+1) = cos( pos / 10000^(2i / d_model) )
 
+    pos      position in the sequence, 0, 1, 2, ...
+    i        pair index, 0 to d_model/2 - 1
+    d_model  embedding width, so the encoding matches it
 
-Why Use Multiple Frequencies?
------------------------------
+Read the index convention carefully, because it is the usual source of confusion:
 
-Transformers use many sine waves with different wavelengths:
+- The two members of a pair are ADJACENT dimensions: 2i and 2i+1. Even
+  dimensions hold sine, odd dimensions hold cosine.
+- Both members of a pair share the SAME frequency. Dimensions 0 and 1 are the
+  same wave; dimension 2 starts the next, slower one.
+- i is the pair number, not the dimension number. With d_model = 512 there are
+  512 dimensions but only 256 frequencies.
 
-- Short wavelengths → capture fine-grained local differences
-- Long wavelengths → capture long-range global structure
+The result is a fixed table:
 
-Together they form a unique positional fingerprint.
+    PE               (seq_len, d_model)      row = position, column = dimension
 
-Think of it as:
-    - high frequency: tiny shifts
-    - mid frequency: medium shifts
-    - low frequency: big shifts
+It contains no learned parameters. It depends only on pos, i and d_model, so it
+can be computed once, before training, and never touched again.
 
+4.2 Worked Example
+------------------
 
-Why Use Cosine Along With Sine?
--------------------------------
+Take d_model = 4, which gives two pairs, i = 0 and i = 1:
 
-Reason 1 — Phase Shift
-    Cosine = sine shifted by 90° → richer representation.
+    i = 0   divisor 10000^(0/4)   = 1        wavelength 2*pi     = 6.28
+    i = 1   divisor 10000^(2/4)   = 100      wavelength 2*pi*100 = 628
 
-Reason 2 — Full Basis
-    Sine+cosine form a complete periodic basis.
+So each row is:
 
-Reason 3 — More Variation
-    Two functions give more uniquely identifiable patterns.
+    PE(pos) = [ sin(pos/1), cos(pos/1), sin(pos/100), cos(pos/100) ]
 
+              dim 0     dim 1     dim 2     dim 3
+              sin fast  cos fast  sin slow  cos slow
+    pos = 0    0.0000    1.0000    0.0000    1.0000
+    pos = 1    0.8415    0.5403    0.0100    1.0000
+    pos = 2    0.9093   -0.4161    0.0200    0.9998
+    pos = 3    0.1411   -0.9900    0.0300    0.9996
+    pos = 4   -0.7568   -0.6536    0.0400    0.9992
+    pos = 5   -0.9589    0.2837    0.0500    0.9988
+    pos = 6   -0.2794    0.9602    0.0600    0.9982
+    pos = 7    0.6570    0.7539    0.0699    0.9976
 
-3.5 Final Sinusoidal Positional Encoding Formula
-------------------------------------------------
+Three things to see in the table.
 
-Each position is encoded using BOTH sine and cosine across multiple frequencies.
+The fast pair has already gone all the way round. Its wavelength is 6.28, so
+pos = 0 and pos = 6 nearly repeat: (0.0000, 1.0000) against (-0.2794, 0.9602).
+Alone it could not tell those apart for long.
 
-The positional encoding vector has the SAME size as the word embedding.
+The slow pair barely moves - dimension 2 creeps 0.01 per step - but it moves in
+one direction, so it separates pos = 0 from pos = 6 cleanly: 0.0000 against
+0.0600. Coarse but unambiguous over this range.
 
----------------------------------------------------------
-# Sinusoidal Positional Encoding Formula
+Neither column is unique on its own; the four together are. That is section 3.4
+in numbers.
 
-For a position `pos` and embedding dimension index `i`:
+Also note every row has the same length: 0.8415^2 + 0.5403^2 + 0.0100^2 +
+1.0000^2 is 1 + 1 = 2 for pos = 1, and for every other row too. In general the
+norm is sqrt(d_model/2), because each of the d_model/2 pairs contributes exactly
+1. No position is intrinsically bigger than another.
 
-PE(pos, 2i)   = sin( pos / (10000^(2i / d_model)) )
-PE(pos, 2i+1) = cos( pos / (10000^(2i / d_model)) )
+4.3 Reading the Table Sideways
+------------------------------
 
-Where:
-- pos      : position index (0,1,2,3,...)
-- i        : dimension index
-- d_model  : embedding size
-- Even dimensions → sine
-- Odd dimensions  → cosine
-- Frequencies decrease exponentially with dimension
----------------------------------------------------------
-Why This Formula Works
-----------------------
+The formula is easier to hold as two pictures.
 
-✔ Smooth & continuous  
-✔ Unique multi-frequency pattern for each position  
-✔ Relative positions naturally emerge  
-✔ Works for unlimited sequence lengths  
-✔ No parameters to learn (PE is deterministic)  
+Along a row (fix pos, vary dimension): a snapshot of every dial at that instant -
+the fingerprint for that one position.
 
+Down a column (fix dimension, vary pos): a single wave sampled at the integers,
+fast at the left of the vector and slower toward the right. Plotted as a heatmap,
+this is the familiar striped band: tight stripes on the left edge, stretching out
+to nearly flat on the right.
 
-How PE Interacts With Embeddings
---------------------------------
+================================================================================
 
-Final input to the Transformer =
+5. Why Relative Position Falls Out
+--------------------------------------------------------------------------------
+
+Requirement 6 asked for offsets, not just absolute slots. "The adjective before
+the noun" is a rule about a gap of 1, and it must mean the same thing at
+position 4 and position 400. The sinusoid gives this almost for free.
+
+5.1 A Shift Is a Rotation
+-------------------------
+
+Take one pair, at frequency w. Compare position pos to position pos + k:
+
+    sin(w(pos+k)) = sin(w*pos)cos(w*k) + cos(w*pos)sin(w*k)
+    cos(w(pos+k)) = cos(w*pos)cos(w*k) - sin(w*pos)sin(w*k)
+
+Both are combinations of sin(w*pos) and cos(w*pos), and the coefficients -
+cos(w*k) and sin(w*k) - contain k but not pos. In matrix form:
+
+    [ sin(w(pos+k)) ]   [  cos(wk)   sin(wk) ] [ sin(w*pos) ]
+    [               ] = [                    ] [            ]
+    [ cos(w(pos+k)) ]   [ -sin(wk)   cos(wk) ] [ cos(w*pos) ]
+
+That 2x2 is a rotation by angle w*k. Stacking all d_model/2 pairs, the same holds
+for the whole vector:
+
+    PE(pos + k) = M_k * PE(pos)
+
+M_k is one fixed linear map per offset k, and crucially it does NOT depend on
+pos. Moving forward 3 words is the same rotation whether you are at word 5 or
+word 500.
+
+This matters because attention is built out of linear maps: Q = X W_Q,
+K = X W_K. A relationship that is linear and position-independent is exactly the
+kind a learned matrix can pick up. "Attend to the token three back" becomes one
+consistent pattern in the weights instead of a separate rule per position. Had
+the offset relationship been some position-dependent mess, no amount of training
+would have compressed it into a shared W_Q.
+
+5.2 Similarity Depends Only on the Gap
+--------------------------------------
+
+Take the dot product of two positional vectors:
+
+    PE(pos) . PE(pos+k)
+        = sum over i of [ sin(w_i pos)sin(w_i(pos+k)) + cos(w_i pos)cos(w_i(pos+k)) ]
+        = sum over i of cos(w_i * k)
+
+Every pos term cancels, by cos(a-b) = cos(a)cos(b) + sin(a)sin(b). What remains
+depends only on k. Two positions 5 apart have the same positional similarity
+wherever they are in the sequence, and that similarity decays as k grows - nearby
+positions look alike, distant ones do not. Attention scores get a built-in
+locality bias with no parameters spent on it.
+
+5.3 The Honest Limitation
+-------------------------
+
+cos(w*k) = cos(-w*k). The dot product for +5 and -5 is identical, so on its own
+the encoding says how far apart two positions are but not which came first.
+
+Direction has to come from somewhere else, and it does: attention does not
+compare PE to PE, it compares Q to K, which are two different learned projections
+(02 section 3). W_Q and W_K can rotate the pairs by different amounts, and that
+asymmetry is what lets a score distinguish "3 before" from "3 after". The
+positional encoding supplies the raw angle; the projections read direction out of
+it.
+
+This is also why later designs revisit the idea. Sinusoidal PE is added once at
+the bottom and then has to survive every layer; RoPE instead rotates Q and K
+themselves inside every attention call, making the relative offset exact rather
+than something the projections must learn to extract.
+
+================================================================================
+
+6. How It Joins the Embeddings
+--------------------------------------------------------------------------------
+
+6.1 Add, Do Not Concatenate
+---------------------------
+
+The final input to the first layer:
 
     X_input = E_word + PE_position
 
-Where:
-- E_word → semantic meaning
-- PE_position → location/ordering information
+    E_word         (seq_len, d_model)   what the word means
+    PE_position    (seq_len, d_model)   where the word is
+    X_input        (seq_len, d_model)   this word, at this position
 
-Addition fuses both into ONE vector:
-    → “The meaning of this word at THIS position.”
+The instinct is to worry: adding mixes the two signals into shared dimensions, so
+how can the model tell them apart? Why not concatenate - keep meaning in the
+first 512 slots and position in the next 64 - which loses nothing?
 
-This allows Self-Attention to understand order.
+Concatenation costs on both sides. Those 64 slots either widen the model, making
+every W_Q, W_K, W_V and the whole FFN more expensive at every layer, or they are
+taken out of the 512, cutting the budget for meaning. Either way the position
+information sits in a fixed corner of the vector and every projection carries
+dead weight for it.
 
+Addition is cheap and, in high dimensions, less lossy than it sounds. Two vectors
+in 512 dimensions are almost never aligned, and the positional part occupies a
+smooth, highly structured region of the space - the product of d_model/2 circles -
+which a learned projection can separate out. The network never has to recover
+E and PE exactly. It only has to compute useful queries and keys from the sum.
 
+Expanding a score makes this concrete. With X = E + P and Q = X W_Q, K = X W_K:
 
+    q_i . k_j = (E_i + P_i) W_Q W_K^T (E_j + P_j)^T
+
+which spreads into four terms:
+
+    content-content     what word i wants from what word j means
+    content-position    what word i wants from where word j is
+    position-content    where word i is, against what word j means
+    position-position   pure distance, section 5.2
+
+The model can weight all four. Attention that is partly semantic and partly
+positional is not a compromise forced by addition - it is the intended behaviour,
+and concatenation would produce the same four terms while costing more.
+
+6.2 Where It Sits in the Pipeline
+---------------------------------
+
+    token IDs                            (batch, seq_len)
+      -> InputEmbeddings                 (batch, seq_len, d_model)
+      -> multiply by sqrt(d_model)
+      -> add PE                          (batch, seq_len, d_model)
+      -> dropout
+      -> encoder / decoder stack
+
+Four points about that ordering.
+
+The sqrt(d_model) multiply comes first, and this note is why it exists. Freshly
+initialized embedding components are small, often around 0.02 in magnitude, while
+PE components are order 1. Added directly, the position would drown the word.
+Scaling by sqrt(512) = 22.6 lifts the embeddings to a comparable size so both
+signals survive. (Home note for that scaling: 01_word_token_vector.txt. Do not
+confuse it with the division by sqrt(d_k) inside attention, which is a different
+fix for a different problem - 02 section 5.)
+
+Dropout is applied to the sum, not to either part alone. It is the first dropout
+in the model.
+
+Position is added exactly ONCE, at the bottom of the stack. Layers 2 through 6
+never re-add it. It reaches them because residual connections pass the input
+forward unchanged through every sublayer (05_add_and_norm.txt), so the positional
+component is carried up the stack rather than re-injected.
+
+Both towers do this. The encoder adds PE to the source sequence and the decoder
+adds PE to the shifted target sequence, using the identical table.
+
+6.3 Shapes
+----------
+
+PE is computed as (seq_len, d_model) and given a leading batch dimension:
+
+    (1, seq_len, d_model)
+
+The 1 broadcasts across the batch, since every sentence in the batch uses the
+same positions. One table serves any batch size.
+
+A practical wrinkle: the table is precomputed up to some maximum seq_len, so an
+input longer than that has no rows to add. The formula itself extrapolates to any
+position - the implementation does not, unless the table is rebuilt.
+
+================================================================================
+
+7. Sinusoidal or Learned?
+--------------------------------------------------------------------------------
+
+The alternative is to skip the design work entirely: make positions an embedding
+table, nn.Embedding(max_seq_len, d_model), initialize it randomly and let training
+decide what each position vector should be. This is LEARNED positional embedding.
+
+    sinusoidal                       learned
+    zero parameters                  max_seq_len * d_model parameters
+    defined for any position         only for positions in the table
+    fixed structure                  free to fit the data
+    relative offset is a rotation    relative structure only if training finds it
+
+The original paper tried both and reported nearly identical quality. It chose
+sinusoidal for one reason: it might extrapolate to sequences longer than any seen
+in training, which a table cannot do at all.
+
+That hope was not borne out. Sinusoidal models also fail past their training
+length, and not gently - the reason is worked out in 03b section 1. BERT and
+GPT-2 use learned embeddings and work fine within their fixed windows.
+
+So the choice between these two is a trade-off rather than a law. But do not
+conclude from this section that a model must have SOME injected positional
+signal. For decoder-only models that turns out to be false - the causal mask
+breaks the symmetry on its own, and models trained with no positional encoding at
+all learn position implicitly and generalize to longer inputs better than any
+explicit scheme. The permutation argument of section 1 is sound for bidirectional
+encoders and does not survive contact with a causal mask. 03b section 8 makes the
+case properly.
+
+7.1 Where the Rest of This Goes
+-------------------------------
+
+Everything above injects position by ADDING a vector to the input embedding,
+once, at the bottom of the stack. That is one option out of four, and it is the
+one modern models abandoned. The full map:
+
+    injected into              absolute/relative   examples
+    -------------------------------------------------------------------
+    the input embedding, once  absolute            sinusoidal, learned
+    the attention scores       relative            ALiBi, T5 bias
+    Q and K, every layer       relative            RoPE
+    nothing at all             implicit            NoPE (causal models only)
+
+Read down that list and position moves later in the computation and closer to the
+operation that actually needs it. Each step removes an assumption this note makes
+without flagging it: that position is a vector, that it belongs in the input,
+that it must be injected at all.
+
+That story is 03b_modern_positional_encoding.txt. Read it after 08, once the
+causal mask is familiar - section 8 of it depends on the mask, and section 5.6 on
+the KV cache. Everything in the present note remains the foundation: 03b reuses
+this frequency ladder unchanged, and its central mechanism is section 5.1's
+rotation, moved from the embedding to Q and K.
+
+================================================================================
+
+8. In Code
+--------------------------------------------------------------------------------
+
+The one part of the implementation that does not read like the formula is the
+divisor. Written directly, 10000^(2i/d_model) means raising a large number to a
+fractional power for every pair. It is computed in log space instead:
+
+           1                                  2i
+    ----------------- = exp( - log(10000) * ------- )
+    10000^(2i/d_model)                      d_model
+
+Same value, only exponentials and multiplications, and no large intermediate.
+This is the `div_term` line in every implementation:
+
+    position = torch.arange(0, seq_len).unsqueeze(1)          (seq_len, 1)
+    div_term = torch.exp(torch.arange(0, d_model, 2)
+                         * (-math.log(10000.0) / d_model))    (d_model/2,)
+
+    pe[:, 0::2] = torch.sin(position * div_term)              even dims: sine
+    pe[:, 1::2] = torch.cos(position * div_term)              odd dims: cosine
+
+    pe = pe.unsqueeze(0)                                      (1, seq_len, d_model)
+
+Notes on the four lines:
+
+- `arange(0, d_model, 2)` produces 0, 2, 4, ... - the values of 2i, not of i.
+  That is why the formula's 2i has no separate factor in the code.
+- `position` is a column (seq_len, 1) and `div_term` is a row (d_model/2,), so
+  `position * div_term` broadcasts to (seq_len, d_model/2): every position
+  against every frequency, in one multiplication.
+- `0::2` and `1::2` write the sine into even columns and the cosine into odd
+  columns, which is the pairing of section 4.1.
+- The table is stored with `register_buffer`, not as a Parameter. A buffer moves
+  with `.to(device)` and is saved in the state dict, but receives no gradient -
+  correct, because PE has nothing to learn.
+
+Forward is then an add over the first `x.shape[1]` positions, followed by
+dropout. Slicing to the actual sequence length matters: the buffer is built for
+the maximum length, and a shorter batch must take only the rows it needs.
+
+================================================================================
+
+9. Practice Questions
+--------------------------------------------------------------------------------
+
+Q1: Self-attention is order-blind. Why can it not be fixed inside the attention
+    layer instead of at the input?
+A:  The layer's inputs are one vector per word and its operations - projection,
+    dot product, softmax, weighted sum - are all symmetric in the sequence
+    index. Nothing it computes has access to position unless position is already
+    present in the vectors it receives. So it has to be written in beforehand.
+    (Later designs like RoPE do inject it inside the layer, but by modifying
+    Q and K, not by changing the attention formula.)
+
+Q2: Why does each frequency use both a sine and a cosine?
+A:  sin(a) = sin(pi - a), so sine alone assigns the same value to two different
+    positions within a single cycle. The pair (sin, cos) is a point on the unit
+    circle, and an angle is unique within a full turn, so the pair pins the
+    position down inside one wavelength. It also gives every position the same
+    vector length, since sin^2 + cos^2 = 1.
+
+Q3: With d_model = 512, how many distinct frequencies are used, and which
+    dimensions share one?
+A:  256. Dimensions 2i and 2i+1 share frequency i, so 0 and 1 are the fastest
+    wave, 2 and 3 the next, up to 510 and 511 as the slowest.
+
+Q4: Why are the wavelengths geometric rather than evenly spaced?
+A:  Resolution is scale-relative. Separating positions 3 and 4 needs a fast dial;
+    separating 3000 and 3100 needs a slow one, and by then the fast dial has
+    wrapped hundreds of times and carries nothing. A geometric ladder gives
+    roughly equal resolving power at every scale, the same reasoning as octaves
+    or a log axis.
+
+Q5: What does the constant 10000 control, and what would happen if it were 100?
+A:  It sets the longest wavelength, 2*pi*10000, about 62,800 positions. It must
+    exceed the longest sequence, so the slowest dial does not wrap inside one
+    input. At 100 the longest wavelength is about 628 positions, so every dial
+    would repeat inside a 1000-token document and distant positions could match
+    on all of them.
+
+Q6: State the relative-position property and say why it is useful to attention
+    specifically.
+A:  PE(pos + k) = M_k * PE(pos), where M_k is a rotation depending on the offset k
+    and not on pos. Attention builds Q and K with learned linear maps, so a
+    relationship that is linear and position-independent is one those maps can
+    capture - "three tokens back" is a single pattern in the weights instead of a
+    separate rule for every position.
+
+Q7: PE(pos) . PE(pos+k) depends only on k. What is the consequence, and what
+    limitation does the same fact expose?
+A:  Positional similarity is translation-invariant and decays with distance, so
+    attention gets a locality bias for free. But the dot product is even in k -
+    identical for +5 and -5 - so the encoding alone cannot tell which token came
+    first. Direction is recoverable only because Q and K use different learned
+    projections, which breaks the symmetry.
+
+Q8: Why is PE added to the embedding rather than concatenated?
+A:  Concatenation either widens the model, making every downstream projection
+    more expensive, or steals dimensions from meaning. Addition costs nothing and
+    loses little in high dimensions, because the positional part lies in a
+    structured region a learned projection can separate. Expanding q_i . k_j with
+    X = E + P gives four terms - content-content, content-position,
+    position-content, position-position - and the model can weight each; the
+    mixing is the intended behaviour.
+
+Q9: Embeddings are multiplied by sqrt(d_model) before PE is added. What breaks
+    if that multiply is skipped?
+A:  Freshly initialized embedding components are around 0.02 while PE components
+    are order 1, so the position would overwhelm the word meaning in the sum. The
+    multiply raises the embeddings to a comparable scale. It is unrelated to the
+    division by sqrt(d_k) inside attention.
+
+Q10: Position is added only at the input. How does layer 6 still know about it?
+A:  Residual connections add each sublayer's input to its output, so the original
+     vector - positional component included - is passed forward through the whole
+     stack. Nothing needs to re-inject it.
+
+Q11: Why is `pe` registered as a buffer instead of a Parameter?
+A:  It is fully determined by pos, i and d_model, so there is nothing to learn. A
+     buffer still moves with `.to(device)` and is saved in the state dict, but
+     receives no gradient and no optimizer state.
+
+Q12: The formula is defined for every position, yet an implementation can still
+     fail on a long input. Why?
+A:  The table is precomputed up to a fixed maximum seq_len and stored. An input
+     longer than that has no rows to add. The mathematics extrapolates; the
+     cached tensor does not.

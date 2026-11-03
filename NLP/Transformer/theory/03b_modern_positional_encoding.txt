@@ -1,0 +1,927 @@
+MODERN POSITIONAL ENCODING
+================================================================================
+
+Read 03_positional_encoding.txt first. That note derives the sinusoid from
+scratch and stops in 2017. This one picks up where it ends and follows what
+happened next.
+
+It is written as a story, because that is what it is. Nobody sat down and
+designed RoPE. Each idea here exists because the previous one broke in a
+specific, discoverable way, and someone went looking for why. Read in order, the
+sequence is almost inevitable. Read as a list of methods, it is just vocabulary.
+
+The cast, in order of appearance:
+
+    2017  sinusoidal          the original, and the promise it did not keep
+    2018  Shaw et al.         stop saying where, start saying how far apart
+    2020  T5 bias             the same idea, made cheap
+    2021  ALiBi               throw the vector away entirely
+    2021  RoPE                ask the question backwards, get rotation
+    2023  PI / NTK / YaRN     stretching RoPE past its training length
+    2022  NoPE                the reversal: maybe none of this was needed
+    2024  2D and M-RoPE       position was never one-dimensional
+
+================================================================================
+
+1. The Promise That Was Not Kept
+--------------------------------------------------------------------------------
+
+Note 03 section 7 recorded a decision. The 2017 authors tested learned positional
+embeddings against sinusoids, found no quality difference, and picked the
+sinusoids anyway. Their stated reason:
+
+    "it may allow the model to extrapolate to sequence lengths longer than the
+     ones encountered during training"
+
+Read that "may". It was a hypothesis, not a result. The formula is defined for
+every position, so a model trained on 512 tokens can be handed position 5,000 and
+something will come out. The hope was that the something would be sensible.
+
+It is not. This is the most important thing to know about sinusoidal positional
+encoding, and it took several years to become common knowledge.
+
+1.1 The Test That Fails
+-----------------------
+
+Here is the situation that will run through this whole note. Keep it in mind; it
+is the reason every method below exists.
+
+    A model is trained on documents up to 2,048 tokens.
+    Someone pastes in a 30,000-token contract and asks what clause 14 says.
+
+Everything about the model is fine. The vocabulary is fine, the attention is
+fine, the weights that learned English on short documents still know English. The
+only thing that has changed is that tokens now carry position numbers the model
+has never seen.
+
+What comes out is not slightly worse. It is often gibberish - repeated phrases,
+lost tracking of who is speaking, perplexity climbing by orders of magnitude
+rather than percent. The model does not degrade gracefully past its training
+length. It falls off a cliff.
+
+1.2 Why the Cliff Is There
+--------------------------
+
+Note 03 section 5.2 proved something reassuring: PE(pos) . PE(pos+k) depends only
+on the gap k. Positional similarity is translation-invariant. So why does moving
+to larger positions break anything at all?
+
+Because that clean property describes PE alone, and the model never sees PE
+alone. It sees E + PE, projected through W_Q and W_K, summed with three other
+interaction terms (note 03 section 6.1), then passed through a softmax whose
+output is a competition among all n positions. None of that is
+translation-invariant. The four-term expansion holds at any position; what those
+terms have learned to *do* was fitted on the positions that appeared in training.
+
+Two concrete things go wrong.
+
+The slow dimensions enter unseen territory. Note 03 section 3.5 built a
+geometric ladder of wavelengths, from about 6 positions up to about 62,800. Train
+on 2,048 positions and ask what each dimension has actually experienced:
+
+    wavelength 6         wrapped 341 times     saw every angle, many times
+    wavelength 600       wrapped 3.4 times     saw every angle
+    wavelength 6,000     covered 1/3 of a turn seen only a slice
+    wavelength 62,800    covered 3% of a turn  seen a tiny arc
+
+The fast dimensions are safe: they completed their cycle so many times during
+training that every possible value showed up. The slow dimensions are not. For
+them, "position 2,048" is not the end of a familiar range - it is the furthest
+edge of a small arc, and position 30,000 is somewhere on the circle the model has
+never visited. Whatever those dimensions mean to the network, they were only ever
+calibrated on a fragment of their own domain.
+
+Remember this asymmetry. Fast dimensions safe, slow dimensions fragile. Three
+sections from now it becomes the entire basis for how long-context models are
+built.
+
+The softmax has never had to divide attention this many ways. Trained on 2,048
+tokens, every row of the attention matrix distributed a total weight of 1 across
+at most 2,048 competitors. At 30,000 tokens it must spread the same total across
+fifteen times as many. Even if every score were perfect, the distribution flattens
+and the entropy of each row rises well past anything seen in training. Position is
+not the only thing that goes out of distribution when a sequence gets longer.
+
+1.3 The Diagnosis
+-----------------
+
+Strip away the details and the fault is structural, and it was visible in note 03
+all along.
+
+Sinusoidal PE is ABSOLUTE. It answers "which slot is this token in?" But nothing
+the model needs to know is phrased that way. Grammar cares that the adjective is
+one before the noun. Coreference cares that the pronoun is forty tokens after its
+antecedent. Every rule the model wants is about GAPS.
+
+Note 03 section 5 showed the gap information is in there - as a rotation M_k, and
+as a dot product depending only on k. But "in there" means the model has to
+extract it, through learned projections, and it can only learn that extraction
+from the (position, gap) combinations training happened to contain. It learned
+gap-of-3 at positions 0 through 2,048. Gap-of-3 at position 30,000 is, to the
+weights that do the extracting, a new input.
+
+So the fix suggests itself, and it is the thread the next three sections follow:
+
+    Stop encoding where a token is and hope the gap survives.
+    Encode the gap directly.
+
+If the model is handed "these tokens are 3 apart" instead of "one is at 2,048 and
+the other at 2,051", then position 30,000 stops being new information. A gap of 3
+is a gap of 3 anywhere in the document. Length generalization stops being
+something to hope for and becomes something the representation guarantees.
+
+That is the whole plot. Everything from here is people finding cheaper and
+cleaner ways to say "3 apart".
+
+================================================================================
+
+2. First Attempt: Put the Gap Inside Attention (Shaw, 2018)
+--------------------------------------------------------------------------------
+
+The first serious relative scheme came a year after the original paper, from Shaw
+and colleagues, and it took the direct route.
+
+If what matters is the gap, then position should not live in the input at all.
+It should live where pairs of tokens actually meet - inside the attention score.
+
+2.1 The Idea
+------------
+
+Recall the score from 02 section 4.1: `s_ij = q_i . k_j`. Shaw's change is to give
+every pair its own learned vector describing their offset, and fold it in:
+
+    s_ij = q_i . ( k_j + a_(j-i) )
+
+`a_(j-i)` is a learned vector, looked up from a small table indexed by the offset
+`j - i`. Not by i, not by j. Only by the gap.
+
+The input embeddings go back to carrying pure meaning. No PE is added at the
+bottom at all. Position enters only at the moment two tokens are compared, and it
+enters as the answer to exactly the question the model was asking: how far apart
+are these two, and in which direction?
+
+The table is clipped. Offsets beyond some distance, say 128, all share one
+entry. The authors' reasoning was that precise distance stops mattering once
+tokens are far apart - "somewhere off to the left" is enough. Clipping also
+bounds the table size and means any offset, however large, has a valid lookup.
+Length generalization comes free, in the crudest possible way: everything distant
+is treated identically.
+
+2.2 What It Cost
+----------------
+
+It worked. It improved translation quality. And almost nobody used it, because of
+what it does to the arithmetic.
+
+In standard attention, `Q K^T` is one matrix multiplication: (n x d_k) by
+(d_k x n). Every pair is handled by the same well-optimized operation, and the
+Value blend is the same again. That single fact is why attention runs fast on a
+GPU (02 section 8).
+
+Shaw's version breaks it. Each pair (i, j) now needs its own vector `a_(j-i)`
+added to `k_j` before the dot product - a different addend for every pair. That
+is no longer one matrix multiply. Implemented naively it materializes a tensor of
+shape (n, n, d_k), which for n = 1,024 and d_k = 64 is 67 million floats per head
+per layer against the 1 million of the score matrix itself - a factor of d_k,
+64x, on the largest tensor attention already has. Clever reshaping
+recovers some of it, but the operation never becomes a plain matmul again.
+
+So the lesson from attempt one is not "relative position is wrong". It is:
+
+    Relative position is right. Paying for it per pair, per dimension,
+    is too expensive.
+
+Someone needed to find a cheaper place to put it.
+
+================================================================================
+
+3. Second Attempt: Make It a Scalar (T5, 2020)
+--------------------------------------------------------------------------------
+
+T5's answer is almost embarrassingly simple, and it is the moment relative
+position became practical.
+
+Shaw's scheme adds a whole `d_k`-dimensional vector per pair. But look at what it
+is ultimately for: nudging one number, the score `s_ij`. So skip the vector.
+Add the number.
+
+    s_ij = q_i . k_j  +  b(j - i)
+
+`b` is a learned SCALAR per offset, per head. Nothing else changes. `Q K^T` stays
+one matrix multiplication; the bias is a small matrix added to the scores
+afterwards, exactly like the mask of 02 section 7.2. The cost is a rounding
+error.
+
+3.1 Buckets
+-----------
+
+One learned scalar per distinct offset would still mean thousands of parameters
+per head, most of them for offsets seen a handful of times. T5 groups offsets
+into 32 BUCKETS, and the grouping is the interesting part:
+
+    small offsets     one bucket each        1, 2, 3, 4, ... exactly
+    larger offsets    logarithmically wide   ... 16-22, 23-31, 32-45 ...
+    beyond the last   all share one bucket
+
+Fine resolution near zero, coarse resolution far away. This is the same instinct
+that made note 03's wavelengths geometric rather than linear: the difference
+between gap 1 and gap 2 is grammatically enormous, and the difference between gap
+600 and gap 601 is nothing. Resolution should be spent where it changes meaning.
+
+The bias is computed once and shared by every layer, so the whole mechanism costs
+32 numbers per head for the entire model.
+
+3.2 What It Gained and What It Gave Up
+--------------------------------------
+
+Gained: relative position, essentially free, compatible with fast attention
+kernels, and each head learns its own distance preference - one head can prefer
+adjacent tokens while another ignores distance entirely.
+
+Gave up: expressiveness. A scalar per bucket can say "pay more attention to
+things about 20 tokens back". It cannot say anything that depends on both the gap
+AND the content, because the bias is added regardless of what the two tokens are.
+Shaw's vector, sitting inside the dot product with `q_i`, could modulate by
+content. T5's scalar cannot.
+
+And the extrapolation is still crude. Beyond the last bucket every distance is
+identical, so a 30,000-token contract is, positionally, a 2,048-token document
+with a large undifferentiated fog attached.
+
+The score is now the right place. The representation is still not right.
+
+================================================================================
+
+4. Third Attempt: Throw the Vector Away (ALiBi, 2021)
+--------------------------------------------------------------------------------
+
+The paper is titled "Train Short, Test Long", which tells you it went straight
+at the problem section 1 posed rather than at translation quality.
+
+ALiBi asks: if the bias is just a scalar function of distance, does it need to be
+LEARNED at all? What if we simply write it down?
+
+    s_ij = q_i . k_j  -  m * (i - j)
+
+For a causal model j is never greater than i, so `(i - j)` is the number of
+tokens back, and the bias is a straight-line penalty: the further back, the more
+subtracted. Nothing is looked up. There is no table, no positional vector, no
+embedding addition. Position appears nowhere in the model except as a linear
+ramp on the attention scores.
+
+`m` is a fixed per-head slope. For h heads the slopes form a geometric sequence
+ending at 2^-8:
+
+    8 heads:   1/2, 1/4, 1/8, 1/16, 1/32, 1/64, 1/128, 1/256
+
+A head with slope 1/2 is punished hard for looking far: 20 tokens back costs it
+10 units of score, which after softmax is annihilation. It becomes a local head,
+reading essentially the last few words. A head with slope 1/256 pays 0.08 for the
+same distance - almost nothing - and stays free to attend across the whole
+document.
+
+That geometric spread is the design. The heads are not given a distance
+preference to learn; they are ASSIGNED one, spanning local to global, and the
+model routes each kind of work to whichever head has the right reach. It is the
+same "cover every scale multiplicatively" reasoning as note 03's frequency
+ladder, applied to heads instead of dimensions.
+
+4.1 Why It Extrapolates
+-----------------------
+
+Now the payoff. Take the 30,000-token contract.
+
+Nothing in ALiBi has a domain. `m * (i - j)` is defined for any distance and
+requires no table lookup, no unseen angle, no dimension that has only experienced
+3% of its cycle. Feed it distance 25,000 and it computes a large penalty, which
+is a sensible thing to compute.
+
+Models trained at 1,024 tokens ran at 2,048 and beyond with perplexity that kept
+improving rather than exploding. After four years of assuming extrapolation was
+just hard, a linear penalty did it.
+
+4.2 The Catch
+-------------
+
+Look closely at what extrapolation means here.
+
+The far-away tokens are not being understood at long range. They are being
+suppressed. Every head has a slope, every slope eventually crushes distant scores
+toward negative infinity, so a long input is handled by each head reading its own
+sliding window and ignoring the rest.
+
+That is a RECENCY PRIOR, hard-coded and unlearnable. For language modelling it is
+an excellent prior - the next word usually depends most on the last few. For the
+contract question it is exactly wrong. "What does clause 14 say" needs a token at
+position 200 to attend precisely to a token at position 24,000, and the head with
+the gentlest slope still pays a penalty that grows without bound.
+
+So ALiBi does not really solve long context. It survives long inputs
+gracefully. The distinction matters enormously, and it is why ALiBi appears in
+some strong models and yet is not what the long-context race settled on.
+
+The scoreboard after three attempts:
+
+    Shaw    relative, expressive, content-aware      too expensive
+    T5      relative, cheap                          not expressive, fog at range
+    ALiBi   relative, free, extrapolates             cannot actually use range
+
+Each one is relative. Each one bolts the gap on as a correction to a score. None
+of them makes relative position a property of the representation itself.
+
+================================================================================
+
+5. The Synthesis: RoPE (2021)
+--------------------------------------------------------------------------------
+
+RoPE - Rotary Position Embedding - is the one that won. Nearly every open model
+you can name uses it: Llama, Qwen, Mistral, Gemma, DeepSeek, Phi.
+
+What makes it worth studying is not the result. It is the method. Instead of
+proposing a mechanism and checking whether the gap survives, RoPE writes down the
+property it wants and solves for the mechanism.
+
+5.1 Asking Backwards
+--------------------
+
+Every scheme so far has the shape "compute the score the usual way, then correct
+it for distance". Turn that around.
+
+We want the score itself - not a correction to it - to depend only on the gap. So
+state the requirement as an equation. Find some function f that stamps position
+into a vector, such that:
+
+    < f(q, m) , f(k, n) >   depends on q, k, and (m - n)
+                            and on nothing else about m and n
+
+If such an f exists, relative position is not extracted, learned, corrected for,
+or hoped for. It is what the dot product computes.
+
+Now, what operation can you apply to a vector, parameterized by a position, that
+changes the vector but leaves its interaction with another such vector depending
+only on the difference of the parameters?
+
+Note 03 already answered this, in section 5.1, without noticing it was an answer.
+
+A ROTATION. Rotate one vector by angle `m*w` and another by `n*w`. The angle
+BETWEEN them was some angle θ; now it is θ + (m - n)*w. The relative angle shifted
+by exactly the difference of positions and the absolute positions cancelled. And
+a dot product depends only on lengths and the angle between - so the dot product
+of two rotated vectors depends only on the gap.
+
+Not approximately. Not extractable-in-principle. Identically, as arithmetic.
+
+5.2 The Mechanism
+-----------------
+
+Take the query and key vectors and cut them into 2D pairs, the same pairing note
+03 used. For pair i, rotate it by angle `pos * w_i`:
+
+    [ q'_(2i)   ]   [ cos(pos*w_i)   -sin(pos*w_i) ] [ q_(2i)   ]
+    [           ] = [                              ] [          ]
+    [ q'_(2i+1) ]   [ sin(pos*w_i)    cos(pos*w_i) ] [ q_(2i+1) ]
+
+    w_i = 1 / 10000^(2i / d_model)
+
+That frequency is note 03's, unchanged. The same geometric ladder, the same base
+constant, the same reasoning about resolution at every scale. RoPE did not
+redesign the sinusoid. It moved it.
+
+Do this to every pair of Q and every pair of K, then run attention exactly as
+02 section 4 describes. Nothing else changes - no bias term, no extra tensor, no
+kernel modification. The score comes out as:
+
+    q'_m . k'_n = sum over i of [ terms in (m - n) * w_i ]
+
+Absolute position is gone from the result. Only the gap remains.
+
+5.3 Three Changes at Once
+-------------------------
+
+Line RoPE up against note 03 and every axis has moved:
+
+                        sinusoidal (2017)        RoPE (2021)
+    applied to          the input embedding      Q and K
+    how                 added                    rotated (multiplied)
+    when                once, at the bottom      inside every attention call
+    relative offset     recoverable in principle exact by construction
+
+Each change fixes something specific, and the third is the one people underrate.
+
+Applied to Q and K, not the embedding. Note 03 section 6.1 had to argue that
+adding E + P is acceptable because a learned projection can pull them apart
+again. RoPE never mixes them. The Value vectors are not rotated at all - what a
+token CONTRIBUTES stays purely semantic, and position affects only how much
+attention it receives. Note 02 section 3 separated the "match" role from the
+"contribute" role; RoPE respects that separation, and sinusoidal PE, which
+contaminates all three, does not.
+
+Rotated, not added. A rotation preserves length. Note 03 section 4.2 observed
+that every PE row has the same norm, which was nice; here it is load-bearing. The
+magnitude of a query is untouched by where it sits, so position cannot make a
+token shout or whisper. It can only change what the token points at.
+
+Inside every attention call. This is the quiet one. Sinusoidal PE is injected
+once and must then survive six or ninety-six layers, carried up by residual
+connections (note 03 section 6.2) and diluted at every step by whatever else gets
+added to the stream. Nobody guarantees layer 40 still has clean access to it.
+RoPE re-applies the rotation at every layer, from the current Q and K. Position
+is not a signal that decays through depth; it is re-stated every time it is used.
+
+5.4 Why the Implementation Looks Wrong
+--------------------------------------
+
+Open any real RoPE implementation and the pairing will not be what section 5.2
+described. Instead of pairing dimension 0 with 1, and 2 with 3, it pairs
+dimension 0 with `d_model/2`, and 1 with `d_model/2 + 1` - the first half against
+the second half. The code is usually a function called `rotate_half`.
+
+The reason is purely mechanical. Pairing adjacent dimensions means interleaved
+memory access; splitting the vector in half means the whole rotation is two slice
+operations and one concatenation, which is far faster on a GPU.
+
+It is mathematically the same thing, and the argument is worth following because
+it recurs. The pairing is just a choice of which dimensions to call partners.
+Q and K are produced by learned matrices `W_Q` and `W_K`, and those matrices can
+permute their own output columns at no cost - a permutation is a valid setting of
+the weights. So whichever pairing you fix, training finds the equivalent
+solution. The convention has to be consistent between Q and K; beyond that it is
+free.
+
+5.5 Long-Range Decay, Honestly
+------------------------------
+
+RoPE is often credited with a built-in preference for nearby tokens. Note 03
+section 5.2 gave the reason: the positional part of the score is a sum of
+`cos(w_i * k)` terms, which is largest at k = 0 and tends to shrink as k grows.
+
+The honest version: it shrinks with heavy oscillation, not smoothly, and the
+envelope decays slowly. It is a mild tendency, nothing like ALiBi's enforced
+ramp. Do not think of RoPE as "attention with a locality bias". Think of it as
+attention with an exact notion of distance, which the model may use as it likes -
+including ignoring it to retrieve something 24,000 tokens back. That freedom is
+precisely what ALiBi gave up in section 4.2, and it is why RoPE, not ALiBi, is
+the substrate of long-context models.
+
+5.6 The Cache
+-------------
+
+One practical property decided a lot of adoption.
+
+During generation, keys and values for tokens already produced are stored and
+reused - the KV cache (12_inference.txt). For that to work, a cached key must
+still be correct when a new token arrives.
+
+With RoPE, the key for position 40 is rotated by `40 * w_i` when it is created,
+and that is final. Position 41 arrives, gets rotated by `41 * w_i`, and the score
+between them comes out depending on the gap of 1, automatically. Nothing cached
+is ever revisited.
+
+Contrast Shaw's scheme, where the addend depends on the PAIR: the correction
+between the new token and a cached one cannot be baked into the cached key,
+because it was not known when that key was stored. RoPE gets the relative
+property while every stored quantity stays absolute and immutable. That is an
+unusually elegant property, and it is why RoPE costs nothing at inference.
+
+================================================================================
+
+6. RoPE Hits the Same Wall
+--------------------------------------------------------------------------------
+
+RoPE makes the score depend only on the gap. Section 1 argued that this is
+exactly what length generalization requires. So RoPE should extrapolate to any
+length.
+
+It does not. Push a RoPE model past its training length and it breaks much like
+the 2017 model did.
+
+This is the most instructive failure in the note, because the theory really is
+correct and the conclusion really does not follow.
+
+6.1 Where the Argument Leaks
+----------------------------
+
+The score depends only on the gap. Fine. But which GAPS did the model train on?
+
+Trained at 2,048 tokens, the largest gap that ever occurred is 2,047. Gap 25,000
+is not a familiar quantity appearing in an unfamiliar place. It is an unfamiliar
+quantity. "Only depends on the gap" guarantees consistency across positions; it
+guarantees nothing about gaps outside the training range.
+
+And now section 1.2's asymmetry returns, in sharper form. Ask what each frequency
+has experienced over gaps up to 2,048:
+
+    wavelength 6         wrapped 341 times     every rotation angle, thoroughly
+    wavelength 600       wrapped 3.4 times     every rotation angle
+    wavelength 6,000     one third of a turn   only a slice
+    wavelength 62,800    3% of a turn          a tiny arc
+
+The fast pairs are genuinely safe. They have seen every angle they can produce,
+so a gap of 25,000 rotates them to somewhere they have been many times.
+
+The slow pairs have not. For them the rotation angle has only ever crept across a
+small arc, and it has been monotonic - the angle grew with the gap, so the model
+could read distance straight off it, like a dial that never wrapped. Extend to
+gap 25,000 and that dial swings into a region the model has never read, and
+eventually wraps, at which point a very large gap starts producing angles that
+look like a small one.
+
+So: the slow dimensions, the ones responsible for long-range structure, are
+exactly the ones that cannot be trusted at long range. That is the whole problem,
+and every fix in section 7 is a different answer to it.
+
+6.2 Why Not Just Train Long
+---------------------------
+
+The obvious response is to train at 128k tokens from the start.
+
+Attention is quadratic (02 section 8). Going from 2k to 128k is 64 times the
+length and roughly 4,096 times the attention cost per document, on top of needing
+a corpus of genuinely long documents, which is scarce - most text is short.
+
+So long-context models are not trained long. They are trained short and then
+STRETCHED, usually with a brief fine-tune at the target length. Making the
+stretch work is one of the most consequential pieces of engineering in modern
+LLMs, and it is entirely a story about the frequencies in section 6.1.
+
+================================================================================
+
+7. Stretching RoPE
+--------------------------------------------------------------------------------
+
+Three ideas in sequence, each fixing the previous one's damage. This is a good
+miniature of how the field actually moves.
+
+7.1 Position Interpolation: Squash Everything
+---------------------------------------------
+
+The 2023 idea, and it is almost too simple. If the model is fine on positions
+0-2,048 and you want 8,192, do not extrapolate. INTERPOLATE. Divide every
+position by 4:
+
+    pos' = pos * (L_train / L_target)
+
+Position 8,000 becomes position 2,000. Every rotation angle the model ever sees
+now lies inside the range it was trained on. Nothing is out of distribution. Add
+a short fine-tune and it works - this is what took the first Llama models from
+2k to 8k and beyond.
+
+The cost is visible in the arithmetic. Adjacent tokens used to be 1 apart and are
+now 0.25 apart. Every gap shrank by 4x, so every distinction the model could make
+is now four times finer than the resolution it was trained to have. Tokens that
+were clearly one apart become nearly indistinguishable.
+
+And notice WHICH dimensions suffer. The fast pairs, the ones that resolve local
+order, are squashed hardest in relative terms - and per section 6.1 they were the
+dimensions that never needed help. PI protects the fragile slow dimensions by
+crushing the healthy fast ones. It treats a targeted problem with a uniform
+remedy.
+
+7.2 NTK-Aware Scaling: Do Not Squash, Re-Tune
+---------------------------------------------
+
+The next idea, which surfaced in the open-source community before the literature,
+leaves positions alone and changes the BASE instead:
+
+    theta = 10000   ->   theta' = 10000 * s^(d/(d-2))     for extension factor s
+
+Note 03 section 3.5 established that the base sets the longest wavelength.
+Raising it stretches the whole ladder - but not evenly. Look at the frequency
+formula: `w_i = 1 / theta^(2i/d_model)`. At i = 0 the exponent is 0, so the
+fastest pair is completely unaffected by any change to theta. At the far end the
+exponent is nearly 1, so the slowest pair is stretched by nearly the full factor.
+
+That is the selectivity PI lacked, obtained for free from the shape of the
+ladder. High frequencies keep their local resolution; low frequencies get their
+wavelengths extended so they no longer wrap or wander off their trained arc. It
+degrades gracefully even without fine-tuning.
+
+The same insight explains a change you will see in model configs and might
+otherwise read as arbitrary. Llama 2 used base 10,000; Llama 3 uses 500,000;
+several long-context models use 1,000,000 or more. Those are not tuned magic
+numbers. A larger base means longer wavelengths means the slow dimensions do not
+wrap within the intended context, which is section 6.1's requirement stated as a
+hyperparameter.
+
+7.3 YaRN: Sort the Dimensions Explicitly
+----------------------------------------
+
+NTK scaling gets the right BEHAVIOUR - touch slow dimensions, spare fast ones -
+as a side effect of the exponent. YaRN makes it the actual rule.
+
+For each pair, compare its wavelength to the training context length and sort it
+into three groups:
+
+    wavelength << L_train    wrapped many times during training
+                             safe to extrapolate; leave it completely alone
+
+    wavelength >> L_train    never completed a cycle
+                             fully interpolate it, PI-style
+
+    in between               ramp smoothly between the two treatments
+
+This is section 6.1 turned directly into an algorithm. No dimension is treated
+because of where it sits in the ladder; each is treated according to whether it
+personally saw enough rotation during training to be trusted.
+
+YaRN adds one more correction that comes from section 1.2 rather than from
+frequencies. A longer sequence means the softmax spreads its weight over more
+competitors, so attention flattens for reasons that have nothing to do with
+position. YaRN compensates by scaling the logits by a factor that grows slowly
+with the extension factor - roughly `0.1 * ln(s) + 1`. It is a small detail with
+a nice moral: two different things go out of distribution when you lengthen a
+sequence, and fixing the positional one alone is not enough.
+
+Llama 3.1's configuration is a close relative of this - a piecewise scaling with
+separate treatment of low and high frequency bands, expressed as `low_freq_factor`
+and `high_freq_factor` in its config. If you have ever read those fields and
+wondered what they meant, they mean section 6.1.
+
+7.4 The Shape of the Whole Section
+----------------------------------
+
+    PI    squash everything                 uniform, damages what was healthy
+    NTK   raise the base                    selective as a side effect
+    YaRN  sort by measured wavelength       selective on purpose, plus temperature
+
+One problem, three answers, each more precisely aimed than the last. That
+progression - blunt fix, structural fix, targeted fix - is the normal shape of
+progress here, and it is worth recognizing because it repeats.
+
+================================================================================
+
+8. The Reversal: Maybe None of This Was Needed
+--------------------------------------------------------------------------------
+
+Everything so far rests on a premise stated in note 03 section 1 and never
+questioned: attention is permutation equivariant, therefore position must be
+injected, therefore the only question is how.
+
+For decoder-only models, that premise is false.
+
+8.1 Where the Argument Went Wrong
+---------------------------------
+
+The permutation argument was made about bare self-attention. But a language model
+does not run bare self-attention. It runs MASKED self-attention
+(08_masked_multihead_attention.txt), and the mask is not symmetric.
+
+Count what each position can see:
+
+    position 0    sees 1 token
+    position 1    sees 2 tokens
+    position 2    sees 3 tokens
+    position 7    sees 8 tokens
+
+The number of visible tokens IS the position. Not encoded, not added - it is a
+structural fact about the shape of the computation. Permute the sequence and the
+mask does not permute with it, so the whole layer is no longer permutation
+equivariant. The proof that motivated this entire line of work does not apply.
+
+And a network can read that signal. Attention with near-uniform weights over
+`t + 1` visible tokens produces an average whose relationship to the sum scales
+with `1/(t+1)`; that quantity varies with position, and later layers can build on
+it. The counting is approximate and emerges over several layers rather than being
+handed over cleanly, but it is available.
+
+8.2 What Happened When Someone Checked
+--------------------------------------
+
+Somebody trained decoder-only language models with no positional encoding at all -
+NoPE - and probed them. The models had positional information internally, and
+their language modelling quality was competitive.
+
+The follow-up result is the striking one. On tasks that specifically test
+generalizing to longer inputs than trained on, NoPE did not merely survive - it
+matched or beat RoPE, ALiBi, and T5 bias. The models with nothing were better at
+the exact thing every method in sections 2 through 7 was designed to achieve.
+
+In hindsight it is not so strange. Every explicit scheme hands the model a
+positional representation with a domain: a table with a range, a bucket that runs
+out, an angle that wraps, a penalty calibrated on distances up to 2,048. Leaving
+the sequence at length 2,048 is inside the domain; going to 30,000 is outside it.
+NoPE has no representation, so it has no domain to leave. The counting the causal
+mask provides works identically at any length, because it is not a representation
+at all - it is the shape of the computation.
+
+8.3 The Boundaries of the Claim
+-------------------------------
+
+Do not over-read this. Four qualifications.
+
+It is causal-only. BERT and every encoder attends both ways, with no mask
+breaking symmetry, so an encoder with no positional encoding genuinely cannot
+distinguish "Moaz killed Lion" from "Lion killed Moaz". For bidirectional models
+note 03's argument stands exactly as written.
+
+The evidence is strongest at modest scale, on tasks chosen to isolate length
+generalization. It is not a demonstration that frontier-scale models should drop
+positional encoding.
+
+Implicit position is imprecise. It emerges gradually across layers rather than
+being available in layer 1, and it is a soft count rather than an exact index.
+Tasks needing sharp positional discrimination are better served by RoPE.
+
+The field did not switch. Essentially every production model still uses RoPE,
+because at scale, with the extension methods of section 7, it works well and it
+is precise.
+
+8.4 The Interesting Compromise
+------------------------------
+
+The influence of NoPE shows up in hybrids rather than in wholesale adoption.
+Several recent architectures apply RoPE to most layers and leave a subset with no
+positional encoding at all - the RoPE layers supplying precise local ordering, the
+NoPE layers giving the model a path for long-range attention that no rotation can
+push out of distribution. Llama 4 has been described as using an interleaved
+scheme of this kind, and Cohere's Command models interleave positionally-encoded
+sliding-window layers with unencoded full-attention layers.
+
+The idea that position should be handled differently in different LAYERS, rather
+than uniformly through the stack, is where this is currently heading. That is
+about as far as the story goes as of now.
+
+================================================================================
+
+9. Position Was Never One-Dimensional
+--------------------------------------------------------------------------------
+
+One more assumption to examine, held silently since note 03 section 1: that a
+position is a single number, because text is a line of tokens.
+
+An image is not a line. Split into patches, a patch is at row 4, column 7, and
+flattening that grid into a sequence destroys the fact that the patch above it -
+a full row away in the flattened index - is its immediate neighbour.
+
+Video is worse: frame, row, column. Three coordinates, on wildly different scales
+and with different meanings.
+
+The fix is the natural one: stop spending the whole frequency ladder on one axis
+and divide it. 2D RoPE gives half the dimension pairs to the row coordinate and
+half to the column, each rotated by its own coordinate. Qwen2-VL's M-RoPE
+(multimodal RoPE) splits three ways for video - temporal, height, width - and
+sets text as the degenerate case where all three coordinates advance together.
+
+The mechanism does not change at all. Section 5.1's requirement - dot product
+depends only on the difference - holds per axis, so a rotation per axis gives
+relative position per axis, and a patch can attend "two rows up" as cleanly as a
+token attends "three tokens back". The only real design question is budget: how
+many of your d_model/2 pairs each axis is worth.
+
+Worth noticing that this only works because RoPE is a per-pair operation. A
+scheme that consumed the whole vector at once would have to be redesigned for
+each new dimensionality. Composability was not a design goal; it fell out of the
+geometry.
+
+================================================================================
+
+10. Where It Stands
+--------------------------------------------------------------------------------
+
+    Method       Enters at         Relative  Learned  Extrapolates
+    ---------------------------------------------------------------------
+    Sinusoidal   input embedding   no        no       poorly
+    Learned      input embedding   no        yes      not at all
+    Shaw         inside the score  yes       yes      crudely (clipped)
+    T5 bias      the score         yes       yes      crudely (last bucket)
+    ALiBi        the score         yes       no       yes, by suppressing range
+    RoPE         Q and K           yes       no       with scaling (section 7)
+    NoPE         nowhere           n/a       n/a      well, causal models only
+
+If you are building something today: use RoPE, with a base sized for your target
+context, and one of the scalings from section 7 if you intend to stretch it. Use
+sinusoids only for a small encoder where simplicity matters more than range.
+
+The larger point is the trajectory. Read the table top to bottom and position
+moves steadily later in the computation and steadily closer to the thing that
+needs it - from a vector added to the input, to a correction on the score, to a
+transformation of the operands themselves, to nothing at all. Each step removed
+an assumption someone had stopped noticing they were making.
+
+The current open questions follow the same pattern. Should position be uniform
+across layers, or should some layers have none (section 8.4)? Can a model be
+trained short and used long without any fine-tune? Is the rotation the right
+group, or just the first one anybody solved for? None of these are settled.
+
+================================================================================
+
+11. Practice Questions
+--------------------------------------------------------------------------------
+
+Q1: A sinusoidal model trained on 2,048 tokens is given 30,000. Sinusoids are
+    defined at every position, and PE(pos).PE(pos+k) depends only on k. So why
+    does it fail?
+A:  Both facts are about PE alone, and the model never sees PE alone. It sees
+    E + PE through learned projections, and those projections were fitted on the
+    positions training contained. Concretely, dimensions whose wavelength exceeds
+    2,048 never completed a cycle, so they only ever occupied a small arc of
+    their range; beyond 2,048 they move into angles never seen. Separately, the
+    softmax must now divide attention among fifteen times as many competitors,
+    which is out of distribution for reasons unrelated to position.
+
+Q2: Which positional dimensions are safe to extrapolate and which are not, and
+    why is that the opposite of intuition?
+A:  Fast (short-wavelength) dimensions are safe: they wrapped hundreds of times
+    during training, so every angle they can produce was seen. Slow
+    (long-wavelength) dimensions are fragile: they never completed a cycle, so
+    their trained range is a small arc. The intuition trap is that the slow
+    dimensions are the ones meant to carry long-range information, so the
+    machinery for long distances is exactly the machinery that fails at long
+    distances.
+
+Q3: Shaw's relative encoding was better than absolute PE and was not adopted.
+    Why not?
+A:  It adds a distinct learned vector per token PAIR inside the dot product, so
+    scores are no longer one matrix multiplication. Naively it materializes an
+    (n, n, d_k) tensor - a factor of d_k on top of the score matrix, 64x at
+    d_k = 64. The idea was right; the price per pair was not payable.
+
+Q4: What did T5 change about Shaw's scheme, and what capability did that cost?
+A:  It replaced the per-pair vector with a single learned scalar per
+    (bucket, head), added to the score after Q K^T. That keeps attention as one
+    matmul and costs about 32 numbers per head. The cost is that a scalar added
+    regardless of content cannot express anything depending on both the gap and
+    what the two tokens are, which Shaw's in-product vector could.
+
+Q5: ALiBi extrapolates to sequences far past its training length. Why is that
+    still not a solution to long context?
+A:  It extrapolates by suppression. Every head has a fixed slope, so distant
+    tokens are penalized without bound and each head effectively reads a sliding
+    window. That is an excellent prior for next-word prediction and exactly wrong
+    for retrieving a clause 24,000 tokens back. It survives long inputs; it does
+    not use them.
+
+Q6: RoPE is derived rather than proposed. What is the requirement, and why does
+    rotation satisfy it?
+A:  Requirement: find f such that <f(q,m), f(k,n)> depends only on q, k and
+    (m - n). Rotation satisfies it because a dot product depends only on lengths
+    and the angle between two vectors. Rotating by m*w and n*w changes the angle
+    between them by exactly (m - n)*w, so absolute positions cancel and the
+    result is a function of the gap alone.
+
+Q7: Name the three axes on which RoPE differs from sinusoidal PE, and give the
+    specific benefit of each.
+A:  (i) Applied to Q and K rather than the embedding - meaning and position are
+    never mixed, and V stays unrotated so what a token contributes is purely
+    semantic. (ii) Rotation rather than addition - length is preserved, so
+    position cannot make a token louder, only redirect it. (iii) Re-applied every
+    layer rather than injected once - position does not have to survive depth via
+    residual connections.
+
+Q8: Why does RoPE cost nothing at inference with a KV cache, while Shaw's scheme
+    would?
+A:  RoPE rotates each key by its own absolute position when the key is created,
+    so a cached key is final and the relative property emerges automatically when
+    a later query is scored against it. Shaw's correction depends on the pair, so
+    it cannot be folded into a key at storage time - it was unknown then.
+
+Q9: RoPE makes the score depend only on the gap. Why does that not deliver
+    unlimited length generalization?
+A:  Because it guarantees consistency ACROSS positions, not validity for unseen
+    GAPS. Trained at 2,048, the largest gap ever encountered is 2,047; a gap of
+    25,000 is a new input. For the slow pairs, which never completed a rotation,
+    it puts the angle in territory never trained and eventually wraps it, so a
+    very large gap can be confused with a small one.
+
+Q10: Position Interpolation works but blunts the model. What exactly does it
+     damage, and how do NTK scaling and YaRN avoid that?
+A:  PI divides every position by the extension factor, so all gaps shrink
+     uniformly and local resolution is lost - and the dimensions that lose it are
+     the fast ones, which never needed help. NTK scaling raises the base instead;
+     because the exponent 2i/d_model is 0 for the fastest pair and near 1 for the
+     slowest, fast pairs are untouched and slow ones stretched. YaRN makes that
+     explicit, classifying each pair by whether its wavelength is shorter than the
+     training length (leave alone), longer (interpolate), or in between (ramp).
+
+Q11: Why does Llama 3 use a RoPE base of 500,000 instead of 10,000?
+A:  The base sets the longest wavelength. A larger base lengthens the slow
+     dimensions so they do not wrap or leave their trained arc within the intended
+     context window. It is section 6.1's requirement expressed as a
+     hyperparameter, not a tuned constant.
+
+Q12: Note 03 argued position must be injected because attention is permutation
+     equivariant. Why does that argument fail for decoder-only models?
+A:  They use a causal mask, which is not symmetric. Position t sees exactly t + 1
+     tokens, so the number of visible tokens is itself positional information, and
+     permuting the sequence does not permute the mask. The layer is not
+     permutation equivariant, so the premise does not hold. It does still hold for
+     bidirectional encoders, which have no such mask.
+
+Q13: NoPE models can beat RoPE at length generalization. Give the intuition, and
+     state the limits of the result.
+A:  Every explicit scheme supplies a positional representation with a domain - a
+     table range, a final bucket, an angle that wraps - and going long leaves that
+     domain. NoPE has no representation and so no domain to leave; the counting
+     the causal mask provides behaves identically at any length. Limits: causal
+     models only, evidence strongest at modest scale on length-generalization
+     tasks, the implicit signal is soft and emerges over several layers, and
+     production models still use RoPE.
+
+Q14: What has to change in RoPE to handle images or video, and why is the change
+     so small?
+A:  Only the allocation of pairs. Give some dimension pairs the row coordinate
+     and others the column (and others the frame index), each rotated by its own
+     coordinate. The mechanism is untouched because RoPE acts independently on
+     each 2D pair, and section 5.1's guarantee holds per axis - so relative
+     position per axis comes out automatically. The only real decision is how many
+     pairs each axis deserves.

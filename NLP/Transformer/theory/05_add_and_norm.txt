@@ -1,3 +1,459 @@
 ADD & NORM
 ================================================================================
 
+Notes 02 and 04 built one sublayer. This note is about the wrapper placed around
+every sublayer in the model, and why a stack of them cannot be trained without
+it.
+
+    Add & Norm  =  a residual connection, then layer normalization
+
+Two mechanisms fixing two different problems. Taken one at a time.
+
+
+1. The Problem: Deep Stacks Stop Training
+--------------------------------------------------------------------------------
+
+The encoder is 6 identical blocks stacked; modern models use 12, 48 or more. The
+reasonable expectation is that more layers can only help. If the extra layers
+turn out to be useless they can learn to pass their input through unchanged, and
+the model ends up no worse than a shallow one.
+
+That is not what happens. Plain deep stacks get worse, and worse on the TRAINING
+error, not just the test error. This rules out overfitting - an overfitting model
+fits the training data better, not worse. The network is failing to optimize at
+all.
+
+1.1 Why The Signal Dies On The Way Back
+---------------------------------------
+
+Backpropagation carries the gradient from the loss at the top down to the weights
+at the bottom by the chain rule, which multiplies one derivative per block:
+
+    dLoss/dx_0 = dLoss/dx_N * dx_N/dx_(N-1) * ... * dx_1/dx_0
+
+Each factor is typically a little below 1. Multiply 48 of them:
+
+    0.9^48 = 0.006
+    0.8^48 = 0.00002
+
+The bottom layers receive almost nothing and barely move. Note 02 section 2.3
+described the same arithmetic along the SEQUENCE: word 1 reaching word 50 through
+49 updates. This is that failure along DEPTH: layer 1 reaching the loss through
+48 blocks. Same product, different axis.
+
+1.2 Why The Obvious Fixes Are Not Enough
+----------------------------------------
+
+Careful initialization sets those factors near 1 at step 0. It says nothing about
+step 10,000, once the weights have moved.
+
+Training longer does not rescue it either. A gradient arriving as 0.00002 does
+not slowly accumulate into progress; it is swamped by the noise in the updates.
+
+There is also a second problem underneath the gradient. For a plain deep stack to
+be "no worse than shallow", the extra blocks have to learn the IDENTITY function.
+A stack of matrix multiplications and non-linearities finds exact identity
+surprisingly hard to represent. The architecture makes doing nothing expensive.
+
+
+2. Residual Connections
+--------------------------------------------------------------------------------
+
+Add the block's input back to its output:
+
+    output = x + Sublayer(x)
+
+Sublayer is whatever the block does - multi-head attention (note 04) or the
+feed-forward network (note 06). The addition is elementwise, and it creates a
+second route through the block: one through the sublayer, one straight past it.
+
+2.1 Why The Gradient Survives
+-----------------------------
+
+Differentiate the two routes together:
+
+    d/dx [ x + F(x) ]  =  1 + F'(x)
+
+The 1 is the entire point. Whatever F does - however small its derivative,
+however badly it is initialized - the gradient still has a path of weight 1 back
+to x. The chain over N blocks becomes a product of (1 + F') terms rather than a
+product of small numbers, so it no longer collapses toward zero.
+
+Every block now has a direct line to the loss, however deep it sits.
+
+2.2 Why Doing Nothing Becomes Cheap
+-----------------------------------
+
+Section 1.2 said a plain block finds identity hard to learn. With a residual,
+identity is the DEFAULT: driving F toward zero, which just means shrinking some
+weights, leaves
+
+    output = x + 0 = x
+
+So a block starts near identity and learns a small correction on top of it. The
+question it has to answer changes from "what should this layer compute?" to "what
+should this layer CHANGE?", which is a far easier question. That is why adding
+depth stops hurting.
+
+2.3 The Shape Constraint It Imposes
+-----------------------------------
+
+x + Sublayer(x) only makes sense if both have the same shape. Every sublayer in
+the model is therefore forced to map
+
+    (batch, seq_len, d_model)  ->  (batch, seq_len, d_model)
+
+This is not a coincidence in the design, it is a requirement the residual imposes
+on everything it wraps. It is why multi-head attention ends by projecting back to
+d_model with W_O (note 04 section 5), and why the feed-forward network expands to
+d_ff and comes back down (note 06). Anything that changed the width would break
+the add.
+
+2.4 The Residual Stream
+-----------------------
+
+A useful way to picture a stack of these: there is one running vector per token,
+d_model wide, travelling straight up through the whole model. Each sublayer READS
+it, computes something, and ADDS the result back. Nothing is ever overwritten;
+contributions accumulate.
+
+    x_0  --> + attention(x_0) -->  x_1
+         --> + ffn(x_1)       -->  x_2
+         --> + attention(x_2) -->  x_3
+         ...
+
+This settles something note 03 left open. Positional encoding is added exactly
+once, at the bottom of the stack. Layer 6 still knows where the words are because
+the residual stream carried that signal upward: it was never overwritten, only
+added to.
+
+
+3. The Second Problem: Scale Drift
+--------------------------------------------------------------------------------
+
+Residuals make depth trainable, and introduce a side effect. Every block ADDS to
+the stream and nothing ever subtracts, so the magnitude of the vectors grows as
+they climb.
+
+If a sublayer contributes something roughly the size of what is already there,
+the stream can double in scale per block. Over 6 blocks that is a factor of 64,
+and deeper stacks are far worse.
+
+What large, drifting activations cost:
+
+- Attention scores are dot products of these vectors, so they inflate with them.
+  Note 02 section 5 showed exactly what oversized scores do to softmax:
+  saturation, near one-hot weights, and gradients that stop flowing.
+- A learning rate that suits layer 1 is wrong for layer 6, because the same step
+  size means something different at a different scale.
+- The scale keeps moving during training, so no fixed setting stays right.
+
+The fix is to renormalize the stream at every block.
+
+
+4. Why Not BatchNorm
+--------------------------------------------------------------------------------
+
+BatchNorm is the standard answer in vision, and the natural first thing to try.
+It normalizes each FEATURE across the BATCH: for feature j, collect its value in
+all the examples of the batch, subtract that group's mean, divide by its standard
+deviation.
+
+It fails here for three separate reasons.
+
+4.1 Padding Poisons The Statistics
+----------------------------------
+
+Sentences in a batch have different lengths, so the short ones are padded (note
+02 section 7). Averaging a feature "across the batch" at position 40 means
+averaging over whichever sentences happen to reach position 40, plus <PAD> slots
+that carry no meaning at all. The statistics of a position depend on the
+accidental length mix of the batch it landed in.
+
+4.2 Training And Inference Disagree
+-----------------------------------
+
+At inference there is often no batch - you translate one sentence. BatchNorm
+handles this by keeping running averages from training and using those instead.
+That is already an approximation, and for text a poor one: the running statistics
+for position 40 were collected from whatever subset of training sentences
+happened to be that long.
+
+4.3 It Couples Examples That Have Nothing To Do With Each Other
+---------------------------------------------------------------
+
+Under BatchNorm the output for sentence A depends on sentences B and C that
+happen to share its batch. Reorder the batch and the numbers change. That is
+tolerable when it acts as mild regularization, but it becomes fragile at the
+small batch sizes large models train with, where the estimates are noisy.
+
+The common thread is that all three problems come from normalizing ACROSS
+EXAMPLES. So do not normalize across examples.
+
+
+5. Layer Normalization
+--------------------------------------------------------------------------------
+
+LayerNorm normalizes across the FEATURE axis instead: take one token's vector,
+all d_model of its numbers, and normalize using only those.
+
+    BatchNorm:  one feature, statistics gathered over the batch
+    LayerNorm:  one token,   statistics gathered over its own features
+
+No other token is involved, and no other sentence is involved. Every problem in
+section 4 disappears at once: padding cannot pollute statistics it is not part
+of, there is nothing to estimate during training and carry over to inference, and
+a batch of 1 behaves exactly like a batch of 64.
+
+5.1 The Formula
+---------------
+
+For a single token vector x with d_model components:
+
+    mean       mu  = (1/d_model) * sum over i of x_i
+    variance   var = (1/d_model) * sum over i of (x_i - mu)^2
+
+    x_hat_i    = (x_i - mu) / sqrt(var + eps)
+
+    output_i   = gamma_i * x_hat_i + beta_i
+
+After the third line every token's vector has mean 0 and variance 1, whatever
+scale it arrived with. Section 3's drift is removed at every block.
+
+5.2 Why Epsilon
+---------------
+
+var can be exactly zero - a token whose components are all equal, which happens
+with padding rows and with dead units. Dividing by sqrt(0) produces infinity or
+NaN, and a single NaN spreads through the whole model in one step. eps, typically
+1e-5 or 1e-6, is a floor that keeps the division safe, and is small enough to
+change nothing otherwise.
+
+5.3 Why Gamma And Beta
+----------------------
+
+Forcing mean 0 and variance 1 throws information away. If the best thing a layer
+could do is output values centered on 3 with a spread of 10, plain normalization
+forbids it.
+
+gamma (a scale) and beta (a shift) are learned vectors of length d_model, one
+entry per feature, that let the network put back whatever scale and offset it
+wants:
+
+    initialized   gamma = 1, beta = 0    the identity, so training begins with
+                                         plain normalization
+    learned       whatever the loss prefers
+
+Normalization provides a stable starting point; gamma and beta let the model move
+away from it deliberately, rather than drifting there by accident.
+
+5.4 Shapes And Parameters
+-------------------------
+
+    input      (batch, seq_len, d_model)
+    mu, var    (batch, seq_len, 1)        one number per token, per sentence
+    gamma      (d_model,)                 shared by every token and sentence
+    beta       (d_model,)
+    output     (batch, seq_len, d_model)
+
+Parameter count is 2 * d_model. At d_model = 512 that is 1,024 numbers per
+LayerNorm, negligible beside the roughly 1 million in one attention block
+(4 * d_model^2).
+
+Note what is not shared: mu and var are recomputed for every token. Note what is:
+gamma and beta are the same for all tokens in all sentences.
+
+5.5 What It Does Not Do
+-----------------------
+
+LayerNorm never mixes tokens. Token 3's output depends on token 3's input and
+nothing else. It is a per-token operation, exactly like the feed-forward network
+of note 06. Only attention moves information across positions.
+
+5.6 A Worked Example
+--------------------
+
+One token, d_model = 4:
+
+    x = [ 2, 4, 4, 10 ]
+
+    mu  = (2 + 4 + 4 + 10) / 4 = 5
+    var = ( (-3)^2 + (-1)^2 + (-1)^2 + 5^2 ) / 4
+        = ( 9 + 1 + 1 + 25 ) / 4 = 9
+    sd  = 3
+
+    x_hat = [ (2-5)/3, (4-5)/3, (4-5)/3, (10-5)/3 ]
+          = [ -1.00, -0.33, -0.33, 1.67 ]
+
+Checking: those four numbers have mean 0 and variance 1. With gamma = 1 and
+beta = 0 that is the output. The vector arrived ranging from 2 to 10; whatever
+scale the block below produced, what leaves here is standardized.
+
+
+6. Putting Them Together: Add & Norm
+--------------------------------------------------------------------------------
+
+6.1 The Paper's Order: Post-Norm
+--------------------------------
+
+    output = LayerNorm( x + Sublayer(x) )
+
+Add first, then normalize the sum. This is what "Add & Norm" means in the paper's
+figure, and what every box with that label in notes 07 and 10 refers to.
+
+6.2 Where Dropout Goes
+----------------------
+
+The full expression actually trained is:
+
+    output = LayerNorm( x + Dropout(Sublayer(x)) )
+
+Dropout applies to what the sublayer produced, BEFORE the addition. It never
+touches x itself: dropping the residual path would damage the identity route of
+section 2.1, which is the one thing that has to work unconditionally. Note 11
+covers dropout across the whole model.
+
+6.3 The Modern Order: Pre-Norm
+------------------------------
+
+    output = x + Sublayer( LayerNorm(x) )
+
+Normalize the sublayer's input, and add the raw x.
+
+6.4 Why Pre-Norm Trains More Easily
+-----------------------------------
+
+The difference is where the LayerNorm sits relative to the residual path.
+
+    post-norm   x --> [ + Sublayer ] --> LayerNorm --> out
+                      the identity path passes THROUGH the LayerNorm
+
+    pre-norm    x --> [ + Sublayer(LayerNorm(x)) ] --> out
+                      the identity path is untouched
+
+Under post-norm the clean 1 of section 2.1 is no longer clean. Every step
+backwards also passes through a normalization, and across many layers those extra
+factors compound. The residual highway has a toll booth on every block.
+
+Under pre-norm, x reaches the output unmodified, so the gradient path back down
+is exactly the identity however deep the stack gets.
+
+The practical consequence: post-norm Transformers are hard to train without a
+learning-rate warmup, and get harder as they get deeper. Pre-norm trains stably
+at large depth and is much less sensitive to warmup. That is why the paper uses
+post-norm and most models since do not.
+
+Post-norm is not worthless. When it does train it often reaches slightly better
+quality, which is why it survived in the original Transformer and in BERT.
+
+6.5 Pre-Norm Needs A Final LayerNorm
+------------------------------------
+
+Under post-norm the last thing that happens in the stack is a normalization, so
+whatever leaves the stack is normalized.
+
+Under pre-norm every LayerNorm is applied to a sublayer's INPUT, so the value
+that finally exits has been added to N times and never normalized afterwards -
+which is exactly the drift of section 3. Pre-norm models therefore add ONE extra
+LayerNorm at the top of the stack, after the last block. Leave it out and the
+model still runs; it just trains worse.
+
+6.6 Which To Implement
+----------------------
+
+Choose deliberately and record the choice in a comment, because the two are easy
+to confuse in code and the wrong one produces a model that trains, only badly.
+
+    following the paper exactly    post-norm
+    following modern practice      pre-norm, plus a final LayerNorm
+
+Be aware that widely used from-scratch implementations often write pre-norm while
+describing the paper's diagram, so the code and the surrounding explanation
+disagree. If an implementation computes x + dropout(sublayer(norm(x))), that is
+pre-norm, whatever the text beside it says.
+
+
+7. After The Paper: RMSNorm
+--------------------------------------------------------------------------------
+
+LayerNorm does two things: it recenters, by subtracting the mean, and it
+rescales, by dividing by the standard deviation. RMSNorm keeps only the second:
+
+    rms(x)   = sqrt( (1/d_model) * sum over i of x_i^2  +  eps )
+    output_i = gamma_i * x_i / rms(x)
+
+No mean subtraction, and no beta.
+
+The finding behind it is that the rescaling is what stabilizes training while the
+recentering contributes little. Dropping it removes one pass over the vector and
+one set of parameters, which is a real saving at scale.
+
+Most models after roughly 2019, LLaMA and its descendants among them, use RMSNorm
+with pre-norm placement. If you read a modern implementation expecting the paper's
+LayerNorm, this is what you will find instead.
+
+
+8. Where This Sits
+--------------------------------------------------------------------------------
+
+Add & Norm wraps EVERY sublayer in the model, so it appears:
+
+    twice per encoder block     around attention, around the FFN      note 07
+    three times per decoder     around masked attention, around
+    block                       cross-attention, around the FFN       note 10
+
+The sublayers it wraps are notes 04 and 06. The dropout inside it is note 11.
+
+
+9. Practice Questions
+--------------------------------------------------------------------------------
+
+Q1: Deep plain networks score worse on TRAINING error than shallow ones. Why does
+    that rule out overfitting, and what does it point to instead?
+A:  Overfitting means fitting the training data too well, so it would show as good
+    training error with poor test error. Worse training error means the optimizer
+    is failing to find good weights at all - the gradient reaching the lower
+    layers has collapsed through the product of many per-layer derivatives, and
+    the extra blocks cannot easily represent the identity function that would
+    make them harmless.
+
+Q2: How does x + F(x) help the gradient? Answer with the derivative.
+A:  d/dx [ x + F(x) ] = 1 + F'(x). The constant 1 is an unconditional path of
+    weight 1 back to the input, so the chain across N blocks multiplies (1 + F')
+    terms instead of small numbers and does not collapse. Every block keeps a
+    direct route to the loss no matter how deep it is.
+
+Q3: Why must every sublayer produce the same shape it received?
+A:  Because the residual computes x + Sublayer(x) elementwise, which requires
+    matching shapes. That constraint is why attention projects back to d_model
+    with W_O and why the FFN expands to d_ff and returns to d_model.
+
+Q4: Give two reasons BatchNorm is a poor fit for batches of sentences.
+A:  Any two of: padded positions and varying sentence lengths mean the statistics
+    at a position depend on the accidental composition of the batch; there is no
+    batch at inference, so it must fall back on running averages collected from a
+    different distribution; and it makes each sentence's output depend on the
+    other sentences sharing its batch, which is noisy at small batch sizes. All
+    three come from normalizing across examples, which LayerNorm avoids by
+    normalizing across features within one token.
+
+Q5: If the aim is mean 0 and variance 1, why add learnable gamma and beta that
+    let the model undo it?
+A:  Normalizing discards scale and offset that may be useful. gamma and beta let
+    the network choose its own scale and offset deliberately, starting from 1 and
+    0 so training begins at plain normalization. Normalization sets a stable
+    default rather than a fixed rule.
+
+Q6: What is the difference between post-norm and pre-norm, and what extra piece
+    does pre-norm require?
+A:  Post-norm is LayerNorm(x + Sublayer(x)), so the residual path runs through a
+    normalization. Pre-norm is x + Sublayer(LayerNorm(x)), leaving the residual
+    path untouched, which is why it trains stably at depth with little warmup.
+    Pre-norm needs one extra LayerNorm after the final block, since nothing else
+    would ever normalize the stack's output.
+
+Q7: Positional encoding is added once, at the bottom. How does layer 6 still know
+    about position?
+A:  The residual connections carry it. Each sublayer adds its result into the
+    running vector instead of replacing it, so the position signal injected at
+    the bottom is never overwritten and is still present higher up.
